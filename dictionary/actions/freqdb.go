@@ -50,6 +50,7 @@ func (a *Actions) CreateQuerySuggestions(ctx *gin.Context) {
 // @Param        term path string true "Search term"
 // @Param        no-multivalues query int false "Forbid multivalues" default(0)
 // @Param        pos query string false "Search part of speach"
+// @Param        sublemma query string false "Search sublemma"
 // @Success      200 {object} map[string]any
 // @Router       /dictionary/{corpusId}/querySuggestions/{term} [get]
 // @Router       /dictionary/{corpusId}/search/{term} [get]
@@ -69,6 +70,12 @@ func (a *Actions) GetQuerySuggestions(ctx *gin.Context) {
 		posOpts = dictionary.SearchWithPoS(pos)
 	}
 
+	sublemma := ctx.Query("sublemma")
+	subOpts := dictionary.SearchWithNoOp()
+	if sublemma != "" {
+		subOpts = dictionary.SearchWithSublemma(sublemma)
+	}
+
 	items, err := dictionary.Search(
 		ctx,
 		a.laDB,
@@ -76,6 +83,7 @@ func (a *Actions) GetQuerySuggestions(ctx *gin.Context) {
 		dictionary.SearchWithAnyValue(term),
 		mvOpts,
 		posOpts,
+		subOpts,
 	)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
