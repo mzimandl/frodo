@@ -128,7 +128,7 @@ func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source)
 	return matches, nil
 }
 
-func SearchTerm(ctx context.Context, db *sql.DB, lemma string, pos string) ([]LexItem, error) {
+func SearchTerm(ctx context.Context, db *sql.DB, lemma string) ([]LexItem, error) {
 	row, err := db.QueryContext(
 		ctx,
 		"SELECT lemma, pos, gender, aspect, JSON_OBJECTAGG(source, idents) AS sources "+
@@ -136,12 +136,12 @@ func SearchTerm(ctx context.Context, db *sql.DB, lemma string, pos string) ([]Le
 			"SELECT lemma, pos, gender, aspect, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id) ORDER BY homonym) AS idents "+
 			"FROM lex_dictionary AS l "+
 			"JOIN ( "+
-			"SELECT DISTINCT group_id FROM lex_dictionary WHERE lemma = ? AND pos = ? "+
+			"SELECT DISTINCT group_id FROM lex_dictionary WHERE lemma = ? "+
 			") AS g ON g.group_id = l.group_id "+
 			"GROUP BY lemma, pos, gender, aspect, source "+
 			") AS sub "+
 			"GROUP BY lemma, pos, gender, aspect",
-		lemma, pos,
+		lemma,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search the term: %w", err)
