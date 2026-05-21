@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"frodo/dictionary"
 	"sort"
+	"strings"
 
 	"github.com/agnivade/levenshtein"
 )
@@ -59,6 +60,10 @@ const (
 	AspectPerf = "P"
 	AspectImp  = "I"
 	AspectBoth = "B"
+
+	POSOrder    = "NAPCVDRJTI"
+	GenderOrder = "MIFN"
+	AspectOrder = "PIB"
 
 	TableName = "lex_dictionary"
 )
@@ -163,7 +168,7 @@ func SearchTerm(ctx context.Context, db *sql.DB, lemma string) ([]LexItem, error
 			item.Gender = genderArg.String
 		}
 		if aspectArg.Valid {
-			item.Gender = genderArg.String
+			item.Aspect = aspectArg.String
 		}
 		// parse jsonIdents into srchItem.Idents
 		if err := json.Unmarshal([]byte(jsonSources), &item.Sources); err != nil {
@@ -173,6 +178,29 @@ func SearchTerm(ctx context.Context, db *sql.DB, lemma string) ([]LexItem, error
 		data = append(data, item)
 	}
 	sort.Slice(data, func(i, j int) bool {
+		if data[i].relevanceScore == data[j].relevanceScore {
+			var orderMap, orderDataI, orderDataJ string
+			if data[i].Pos == "N" && data[j].Pos == "N" {
+				// order by gender if both items are nouns
+				orderMap, orderDataI, orderDataJ = GenderOrder, data[i].Gender, data[j].Gender
+			} else if data[i].Pos == "V" && data[j].Pos == "V" {
+				// order by aspect if both items are verbs
+				orderMap, orderDataI, orderDataJ = AspectOrder, data[i].Aspect, data[j].Aspect
+			} else {
+				// order by PoS for other items
+				orderMap, orderDataI, orderDataJ = POSOrder, data[i].Pos, data[j].Pos
+			}
+			orderIndexI := strings.Index(orderMap, orderDataI)
+			orderIndexJ := strings.Index(orderMap, orderDataJ)
+			if orderIndexI == -1 {
+				orderIndexI = len(orderMap)
+			}
+			if orderIndexJ == -1 {
+				orderIndexJ = len(orderMap)
+			}
+
+			return orderIndexI < orderIndexJ
+		}
 		return data[i].relevanceScore < data[j].relevanceScore
 	})
 
