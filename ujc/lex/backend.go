@@ -73,7 +73,7 @@ CREATE TABLE %s (
 	group_id INT NOT NULL,
 	homonym INT,
 
-	lemma VARCHAR(100) NOT NULL,
+	lemma VARCHAR(100) COLLATE utf8mb4_bin NOT NULL,
 	pos VARCHAR(1) NOT NULL,
 	gender VARCHAR(1),
 	aspect VARCHAR(1),
