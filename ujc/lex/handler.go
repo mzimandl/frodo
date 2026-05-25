@@ -142,7 +142,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 
 	for i, match := range matches {
 		// search lex dictionary for the first lemma found in the corpus, get list of variants and their PoS
-		lexItems, err := SearchTerm(ctx, actions.db.DB(), match.Lemma)
+		lexItems, err := SearchVariants(ctx, actions.db.DB(), match.Lemma)
 		if err != nil {
 			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 			return

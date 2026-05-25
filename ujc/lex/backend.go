@@ -133,19 +133,25 @@ func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source)
 	return matches, nil
 }
 
-func SearchTerm(ctx context.Context, db *sql.DB, lemma string) ([]LexItem, error) {
+func SearchVariants(ctx context.Context, db *sql.DB, lemma string) ([]LexItem, error) {
 	row, err := db.QueryContext(
 		ctx,
-		"SELECT lemma, pos, gender, aspect, JSON_OBJECTAGG(source, idents) AS sources "+
-			"FROM ( "+
-			"SELECT lemma, pos, gender, aspect, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id) ORDER BY homonym) AS idents "+
-			"FROM lex_dictionary AS l "+
-			"JOIN ( "+
-			"SELECT DISTINCT group_id FROM lex_dictionary WHERE lemma = ? "+
-			") AS g ON g.group_id = l.group_id "+
-			"GROUP BY lemma, pos, gender, aspect, source "+
-			") AS sub "+
-			"GROUP BY lemma, pos, gender, aspect",
+		`SELECT lemma, pos, gender, aspect, JSON_OBJECTAGG(source, idents) AS sources
+		FROM (
+			SELECT sub.lemma as lemma, sub.pos as pos, sub.gender as gender, sub.aspect as aspect, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id) ORDER BY homonym) AS idents
+			FROM (
+				SELECT DISTINCT lemma, pos, gender, aspect
+				FROM lex_dictionary AS l
+				JOIN (
+					SELECT DISTINCT group_id FROM lex_dictionary WHERE lemma = ?
+				) AS g
+				ON g.group_id = l.group_id
+			) AS sub
+			JOIN lex_dictionary AS l2
+			ON l2.lemma = sub.lemma AND l2.pos = sub.pos AND (l2.gender = sub.gender OR (l2.gender IS NULL AND sub.gender IS NULL)) AND (l2.aspect = sub.aspect OR (l2.aspect IS NULL AND sub.aspect IS NULL))
+			GROUP BY lemma, pos, gender, aspect, source
+		) AS sub2
+		GROUP BY lemma, pos, gender, aspect`,
 		lemma,
 	)
 	if err != nil {
