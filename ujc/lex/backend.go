@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"frodo/dictionary"
 	"sort"
+	"strings"
 
 	"github.com/agnivade/levenshtein"
 )
@@ -60,6 +61,10 @@ const (
 	AspectImp  = "I"
 	AspectBoth = "B"
 
+	POSOrder    = "NAPCVDRJTI"
+	GenderOrder = "MIFN"
+	AspectOrder = "PIB"
+
 	TableName = "lex_dictionary"
 )
 
@@ -68,7 +73,7 @@ CREATE TABLE %s (
 	group_id INT NOT NULL,
 	homonym INT,
 
-	lemma VARCHAR(100) NOT NULL,
+	lemma VARCHAR(100) COLLATE utf8mb4_bin NOT NULL,
 	pos VARCHAR(1) NOT NULL,
 	gender VARCHAR(1),
 	aspect VARCHAR(1),
@@ -128,20 +133,26 @@ func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source)
 	return matches, nil
 }
 
-func SearchTerm(ctx context.Context, db *sql.DB, lemma string, pos string) ([]LexItem, error) {
+func SearchVariants(ctx context.Context, db *sql.DB, lemma string) ([]LexItem, error) {
 	row, err := db.QueryContext(
 		ctx,
-		"SELECT lemma, pos, gender, aspect, JSON_OBJECTAGG(source, idents) AS sources "+
-			"FROM ( "+
-			"SELECT lemma, pos, gender, aspect, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id) ORDER BY homonym) AS idents "+
-			"FROM lex_dictionary AS l "+
-			"JOIN ( "+
-			"SELECT DISTINCT group_id FROM lex_dictionary WHERE lemma = ? AND pos = ? "+
-			") AS g ON g.group_id = l.group_id "+
-			"GROUP BY lemma, pos, gender, aspect, source "+
-			") AS sub "+
-			"GROUP BY lemma, pos, gender, aspect",
-		lemma, pos,
+		`SELECT lemma, pos, gender, aspect, JSON_OBJECTAGG(source, idents) AS sources
+		FROM (
+			SELECT sub.lemma as lemma, sub.pos as pos, sub.gender as gender, sub.aspect as aspect, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id) ORDER BY homonym) AS idents
+			FROM (
+				SELECT DISTINCT lemma, pos, gender, aspect
+				FROM lex_dictionary AS l
+				JOIN (
+					SELECT DISTINCT group_id FROM lex_dictionary WHERE lemma = ?
+				) AS g
+				ON g.group_id = l.group_id
+			) AS sub
+			JOIN lex_dictionary AS l2
+			ON l2.lemma = sub.lemma AND l2.pos = sub.pos AND (l2.gender = sub.gender OR (l2.gender IS NULL AND sub.gender IS NULL)) AND (l2.aspect = sub.aspect OR (l2.aspect IS NULL AND sub.aspect IS NULL))
+			GROUP BY lemma, pos, gender, aspect, source
+		) AS sub2
+		GROUP BY lemma, pos, gender, aspect`,
+		lemma,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search the term: %w", err)
@@ -163,7 +174,7 @@ func SearchTerm(ctx context.Context, db *sql.DB, lemma string, pos string) ([]Le
 			item.Gender = genderArg.String
 		}
 		if aspectArg.Valid {
-			item.Gender = genderArg.String
+			item.Aspect = aspectArg.String
 		}
 		// parse jsonIdents into srchItem.Idents
 		if err := json.Unmarshal([]byte(jsonSources), &item.Sources); err != nil {
@@ -173,6 +184,29 @@ func SearchTerm(ctx context.Context, db *sql.DB, lemma string, pos string) ([]Le
 		data = append(data, item)
 	}
 	sort.Slice(data, func(i, j int) bool {
+		if data[i].relevanceScore == data[j].relevanceScore {
+			var orderMap, orderDataI, orderDataJ string
+			if data[i].Pos == "N" && data[j].Pos == "N" {
+				// order by gender if both items are nouns
+				orderMap, orderDataI, orderDataJ = GenderOrder, data[i].Gender, data[j].Gender
+			} else if data[i].Pos == "V" && data[j].Pos == "V" {
+				// order by aspect if both items are verbs
+				orderMap, orderDataI, orderDataJ = AspectOrder, data[i].Aspect, data[j].Aspect
+			} else {
+				// order by PoS for other items
+				orderMap, orderDataI, orderDataJ = POSOrder, data[i].Pos, data[j].Pos
+			}
+			orderIndexI := strings.Index(orderMap, orderDataI)
+			orderIndexJ := strings.Index(orderMap, orderDataJ)
+			if orderIndexI == -1 {
+				orderIndexI = len(orderMap)
+			}
+			if orderIndexJ == -1 {
+				orderIndexJ = len(orderMap)
+			}
+
+			return orderIndexI < orderIndexJ
+		}
 		return data[i].relevanceScore < data[j].relevanceScore
 	})
 
