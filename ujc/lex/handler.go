@@ -136,18 +136,38 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 		}
 	}
 
+	// remove lemma duplicates based
+	// replace PoS by unknown PoS
+	matches = collections.SliceReduce(matches, func(acc []dictionary.Lemma, curr dictionary.Lemma, i int) []dictionary.Lemma {
+		if collections.SliceFindIndex(acc, func(item dictionary.Lemma) bool {
+			return item.Lemma == curr.Lemma
+		}) == -1 {
+			// just bare minimum for WaG to process the match
+			acc = append(acc, dictionary.Lemma{
+				ID:        curr.ID,
+				Lemma:     curr.Lemma,
+				PoS:       curr.PoS,
+				Forms:     []dictionary.Form{{Value: curr.Lemma, Sublemma: curr.Lemma}},
+				Sublemmas: []dictionary.Sublemma{{Value: curr.Lemma}},
+			})
+		}
+		return acc
+	}, make([]dictionary.Lemma, 0, len(matches)))
+
+	// sort matches by their similarity to the query term using Levenshtein distance
 	sort.Slice(matches, func(i, j int) bool {
 		return levenshtein.ComputeDistance(term, matches[i].Lemma) < levenshtein.ComputeDistance(term, matches[j].Lemma)
 	})
 
+	// to each lematized match attach list of variants from the lex dictionary just by lemma value
 	for i, match := range matches {
-		// search lex dictionary for the first lemma found in the corpus, get list of variants and their PoS
 		lexItems, err := SearchVariants(ctx, actions.db.DB(), match.Lemma)
 		if err != nil {
 			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 			return
 		}
 		if lexItems != nil {
+			// filter data by source priority
 			for _, source := range actions.sourcePriority {
 				filtered := collections.SliceFilter(lexItems, func(lexItem LexItem, i int) bool {
 					_, ok := lexItem.Sources[source]
@@ -159,6 +179,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 					break
 				}
 			}
+			// attach corpus corpus counterpart to each variant
 			actions.attachCorpusLemmata(ctx, corpusId, lexItems)
 			extraData.Variants = lexItems
 			match.ExtraData = extraData
@@ -167,7 +188,8 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	}
 
 	ans := map[string]any{
-		"matches": matches,
+		"matches":     matches,
+		"suggestions": collections.SliceMap(matches[1:], func(match dictionary.Lemma, i int) string { return match.Lemma }),
 	}
 	uniresp.WriteJSONResponse(ctx.Writer, ans)
 }

@@ -98,12 +98,12 @@ func CreateTables(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 }
 
 func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source) ([]dictionary.Lemma, error) {
+	// TODO this does not do much now, but we could implement fuzzy search to provide suggestions
 	row, err := db.QueryContext(
 		ctx,
 		"SELECT DISTINCT lemma, pos "+
 			"FROM lex_dictionary "+
-			"WHERE lemma = ? AND source = ? "+
-			"GROUP BY lemma, pos",
+			"WHERE lemma = ? AND source = ? ",
 		lemma, source,
 	)
 	if err != nil {
@@ -114,6 +114,7 @@ func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source)
 	matches := make([]dictionary.Lemma, 0)
 	i := 0
 	for row.Next() {
+		// just bare minimum for WaG to process the match
 		match := dictionary.Lemma{
 			ID:        fmt.Sprintf("match-%s-%d", source, i),
 			Forms:     make([]dictionary.Form, 0, 1),
