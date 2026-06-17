@@ -16,21 +16,16 @@
 
 package lex
 
-import "frodo/dictionary"
-
 type LexID struct {
 	ParentID string `json:"parentId"`
 	ID       string `json:"id"`
 }
 
 type LexItem struct {
-	Lemma  string `json:"lemma"`
-	Pos    string `json:"pos"`
-	Gender string `json:"gender"`
-	Aspect string `json:"aspect"`
-
-	Sources     map[Source][]LexID `json:"sources"`
-	CorpusEntry *dictionary.Lemma  `json:"corpusEntry"`
-
+	Lemma          string             `json:"lemma"`
+	Pos            string             `json:"pos"`
+	Gender         string             `json:"gender"`
+	Aspect         string             `json:"aspect"`
+	Sources        map[Source][]LexID `json:"sources"`
 	relevanceScore int
 }

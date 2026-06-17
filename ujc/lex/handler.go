@@ -33,9 +33,9 @@ import (
 )
 
 type LexExtraData struct {
-	CorpusId   string    `json:"corpusId"`
-	MainSource Source    `json:"mainSource"`
-	Variants   []LexItem `json:"variants"`
+	CorpusId   string  `json:"corpusId"`
+	MainSource Source  `json:"mainSource"`
+	Variant    LexItem `json:"variant"`
 }
 
 type Handler struct {
@@ -64,18 +64,6 @@ func (actions *Handler) getQueryMatches(ctx context.Context, corpusId, term stri
 		return ans, nil
 	}
 	return []dictionary.Lemma{}, nil
-}
-
-func (actions *Handler) attachCorpusLemmata(ctx context.Context, corpusId string, data []LexItem) ([]LexItem, error) {
-	for i, item := range data {
-		corpusEntry, err := actions.searchCorpusLemma(ctx, corpusId, item.Lemma, item.Pos)
-		if err != nil {
-			return nil, fmt.Errorf("failed to search corpus lemma: %w", err)
-		}
-		data[i].CorpusEntry = corpusEntry
-		log.Debug().Str("lemma", item.Lemma).Str("pos", item.Pos).Interface("corpusEntry", corpusEntry).Msg("Attached corpus entry to lex item")
-	}
-	return data, nil
 }
 
 func (actions *Handler) searchCorpusLemma(ctx context.Context, corpusId, lemma, pos string) (*dictionary.Lemma, error) {
@@ -116,29 +104,25 @@ func (actions *Handler) searchCorpusLemma(ctx context.Context, corpusId, lemma, 
 func (actions *Handler) SearchWord(ctx *gin.Context) {
 	corpusId := ctx.Param("corpusId")
 	term := ctx.Param("term")
-	extraData := LexExtraData{
-		CorpusId: corpusId,
-	}
 
 	// search corpus for possible lemmata of the word
-	matches, err := actions.getQueryMatches(ctx, corpusId, term)
+	bestMatches, err := actions.getQueryMatches(ctx, corpusId, term)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
 	}
 
 	// if empty corpus matches, use different sources
-	if len(matches) == 0 {
-		matches, err = SearchMatches(ctx, actions.db.DB(), term, SourceASSC)
+	if len(bestMatches) == 0 {
+		bestMatches, err = SearchMatches(ctx, actions.db.DB(), term, SourceASSC)
 		if err != nil {
 			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// remove lemma duplicates based
-	// replace PoS by unknown PoS
-	matches = collections.SliceReduce(matches, func(acc []dictionary.Lemma, curr dictionary.Lemma, i int) []dictionary.Lemma {
+	// remove lemma duplicates
+	bestMatches = collections.SliceReduce(bestMatches, func(acc []dictionary.Lemma, curr dictionary.Lemma, i int) []dictionary.Lemma {
 		if collections.SliceFindIndex(acc, func(item dictionary.Lemma) bool {
 			return item.Lemma == curr.Lemma
 		}) == -1 {
@@ -152,44 +136,72 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 			})
 		}
 		return acc
-	}, make([]dictionary.Lemma, 0, len(matches)))
+	}, make([]dictionary.Lemma, 0, len(bestMatches)))
 
 	// sort matches by their similarity to the query term using Levenshtein distance
-	sort.Slice(matches, func(i, j int) bool {
-		return levenshtein.ComputeDistance(term, matches[i].Lemma) < levenshtein.ComputeDistance(term, matches[j].Lemma)
+	sort.Slice(bestMatches, func(i, j int) bool {
+		return levenshtein.ComputeDistance(term, bestMatches[i].Lemma) < levenshtein.ComputeDistance(term, bestMatches[j].Lemma)
 	})
 
-	// to each lematized match attach list of variants from the lex dictionary just by lemma value
-	for i, match := range matches {
-		lexItems, err := SearchVariants(ctx, actions.db.DB(), match.Lemma)
+	// we get data for first match, the rest are suggestions
+	bestMatch := bestMatches[0]
+	suggestions := collections.SliceMap(bestMatches[1:], func(match dictionary.Lemma, i int) string { return match.Lemma })
+
+	lexItems, err := SearchVariants(ctx, actions.db.DB(), bestMatch.Lemma)
+	if err != nil {
+		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
+		return
+	}
+	if lexItems == nil {
+		ans := map[string]any{
+			"matches":     []dictionary.Lemma{bestMatch},
+			"suggestions": suggestions,
+		}
+		uniresp.WriteJSONResponse(ctx.Writer, ans)
+		return
+	}
+
+	var mainSource Source
+	// filter data by source priority
+	for _, source := range actions.sourcePriority {
+		filtered := collections.SliceFilter(lexItems, func(lexItem LexItem, i int) bool {
+			_, ok := lexItem.Sources[source]
+			return ok
+		})
+		if len(filtered) > 0 {
+			lexItems = filtered
+			mainSource = source
+			break
+		}
+	}
+
+	variants := make([]dictionary.Lemma, 0, len(lexItems))
+	for i, item := range lexItems {
+		corpusEntry, err := actions.searchCorpusLemma(ctx, corpusId, item.Lemma, item.Pos)
 		if err != nil {
 			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 			return
 		}
-		if lexItems != nil {
-			// filter data by source priority
-			for _, source := range actions.sourcePriority {
-				filtered := collections.SliceFilter(lexItems, func(lexItem LexItem, i int) bool {
-					_, ok := lexItem.Sources[source]
-					return ok
-				})
-				if len(filtered) > 0 {
-					lexItems = filtered
-					extraData.MainSource = source
-					break
-				}
+		if corpusEntry == nil {
+			corpusEntry = &dictionary.Lemma{
+				ID:        fmt.Sprintf("match-%d", i),
+				Lemma:     item.Lemma,
+				PoS:       item.Pos,
+				Forms:     []dictionary.Form{{Value: item.Lemma, Sublemma: item.Lemma}},
+				Sublemmas: []dictionary.Sublemma{{Value: item.Lemma}},
 			}
-			// attach corpus corpus counterpart to each variant
-			actions.attachCorpusLemmata(ctx, corpusId, lexItems)
-			extraData.Variants = lexItems
-			match.ExtraData = extraData
 		}
-		matches[i] = match
+		corpusEntry.ExtraData = LexExtraData{
+			CorpusId:   corpusId,
+			MainSource: mainSource,
+			Variant:    item,
+		}
+		variants = append(variants, *corpusEntry)
 	}
 
 	ans := map[string]any{
-		"matches":     matches,
-		"suggestions": collections.SliceMap(matches[1:], func(match dictionary.Lemma, i int) string { return match.Lemma }),
+		"matches":     variants,
+		"suggestions": suggestions,
 	}
 	uniresp.WriteJSONResponse(ctx.Writer, ans)
 }
