@@ -88,6 +88,7 @@ type Lemma struct {
 	Forms     []Form     `json:"forms"`
 	Sublemmas []Sublemma `json:"sublemmas"`
 	PoS       string     `json:"pos"`
+	Specifier string     `json:"specifier"`
 	IsPname   bool       `json:"is_pname"`
 	Count     int        `json:"count"`
 	IPM       float64    `json:"ipm,omitempty"`

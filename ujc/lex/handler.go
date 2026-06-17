@@ -17,6 +17,7 @@
 package lex
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"frodo/db/mysql"
@@ -187,6 +188,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 				ID:        fmt.Sprintf("match-%d", i),
 				Lemma:     item.Lemma,
 				PoS:       item.Pos,
+				Specifier: cmp.Or(item.Gender, item.Aspect),
 				Forms:     []dictionary.Form{{Value: item.Lemma, Sublemma: item.Lemma}},
 				Sublemmas: []dictionary.Sublemma{{Value: item.Lemma}},
 			}
