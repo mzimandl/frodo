@@ -22,6 +22,7 @@ import (
 	"database/sql"
 	"fmt"
 	"frodo/corpus"
+	"sync"
 	"time"
 
 	"github.com/czcorpus/cnc-gokit/util"
@@ -75,10 +76,11 @@ func (tx *MySQLTx) Rollback() error {
 // ------
 
 type CNCMySQLHandler struct {
-	conn             *sql.DB
-	corporaTableName string
-	pcTableName      string
-	corpusInfoCache  map[string]*corpus.DBInfo
+	conn                *sql.DB
+	corporaTableName    string
+	pcTableName         string
+	corpusInfoCacheLock sync.RWMutex
+	corpusInfoCache     map[string]*corpus.DBInfo
 }
 
 func (c *CNCMySQLHandler) ifMissingAddStructattr(
@@ -307,7 +309,9 @@ func (c *CNCMySQLHandler) LoadAliasedInfo(corpusID, aliasOf string) (*corpus.DBI
 }
 
 func (c *CNCMySQLHandler) LoadInfo(corpusID string) (*corpus.DBInfo, error) {
+	c.corpusInfoCacheLock.RLock()
 	srch, ok := c.corpusInfoCache[corpusID]
+	c.corpusInfoCacheLock.RUnlock()
 	if ok {
 		return srch, nil
 	}
@@ -356,7 +360,9 @@ func (c *CNCMySQLHandler) LoadInfo(corpusID string) (*corpus.DBInfo, error) {
 		ans.ParallelCorpus = pcName.String
 	}
 	ans.HasLimitedVariant = variant.Valid
+	c.corpusInfoCacheLock.Lock()
 	c.corpusInfoCache[corpusID] = &ans
+	c.corpusInfoCacheLock.Unlock()
 	return &ans, nil
 
 }
