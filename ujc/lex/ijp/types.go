@@ -14,18 +14,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package lex
+package ijp
 
-type LexID struct {
-	ParentID string `json:"parentId"`
-	ID       string `json:"id"`
-}
-
-type LexItem struct {
-	Lemma          string             `json:"lemma"`
-	Pos            string             `json:"pos"`
-	Gender         string             `json:"gender"`
-	Aspect         string             `json:"aspect"`
-	Sources        map[Source][]LexID `json:"sources"`
-	relevanceScore int
+type SrcFileRow struct {
+	GroupID    string
+	ExternalID string
+	Variant    string
+	Also       string
+	Pos        string
+	Gender     string
+	Aspect     string
 }

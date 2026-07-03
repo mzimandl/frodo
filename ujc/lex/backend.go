@@ -51,11 +51,13 @@ const (
 	POSVerb  = "V"
 	POSUnkn  = "X"
 	POSPunc  = "Z"
+	POSDTIJ  = "DTIJ"
 
-	GenderMascAnim = "M"
-	GenderMascInan = "I"
-	GenderFem      = "F"
-	GenderNeut     = "N"
+	GenderMascAnim     = "M"
+	GenderMascInan     = "I"
+	GenderMascAnimInan = "MI"
+	GenderFem          = "F"
+	GenderNeut         = "N"
 
 	AspectPerf = "P"
 	AspectImp  = "I"
@@ -70,12 +72,12 @@ const (
 
 var dictionaryTable = `
 CREATE TABLE %s (
-	group_id INT NOT NULL,
-	homonym INT,
+	group_id VARCHAR(100) COLLATE utf8mb4_bin,
+	homonym INT DEFAULT 0,
 
 	lemma VARCHAR(100) COLLATE utf8mb4_bin NOT NULL,
-	pos VARCHAR(1) NOT NULL,
-	gender VARCHAR(1),
+	pos VARCHAR(4) NOT NULL,
+	gender VARCHAR(2),
 	aspect VARCHAR(1),
 	
 	source VARCHAR(8) NOT NULL,
@@ -91,7 +93,7 @@ func CreateTables(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", TableName)); err != nil {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(dictionaryTable, TableName, TableName)); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(dictionaryTable, TableName)); err != nil {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 	return tx, nil
@@ -137,23 +139,31 @@ func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source)
 func SearchVariants(ctx context.Context, db *sql.DB, lemma string) ([]LexItem, error) {
 	row, err := db.QueryContext(
 		ctx,
-		`SELECT lemma, pos, gender, aspect, JSON_OBJECTAGG(source, idents) AS sources
+		`
+		-- aggregate external ids to JSON array for each lemma and its variants, grouped by source
+		SELECT lemma, pos, gender, aspect, JSON_OBJECTAGG(source, idents) AS sources
 		FROM (
+			-- get external source identifiers for the lemma and its variants
 			SELECT sub.lemma as lemma, sub.pos as pos, sub.gender as gender, sub.aspect as aspect, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id) ORDER BY homonym) AS idents
 			FROM (
+				-- find available variants, get exact lemmata and their variants based on group_id and source
 				SELECT DISTINCT lemma, pos, gender, aspect
 				FROM lex_dictionary AS l
 				JOIN (
-					SELECT DISTINCT group_id FROM lex_dictionary WHERE lemma = ?
+					SELECT DISTINCT group_id, source FROM lex_dictionary WHERE lemma = ? AND group_id IS NOT NULL
 				) AS g
-				ON g.group_id = l.group_id
+				ON g.group_id = l.group_id AND g.source = l.source
+				UNION
+				SELECT DISTINCT lemma, pos, gender, aspect
+				FROM lex_dictionary AS l
+				WHERE lemma = ? AND group_id IS NULL
 			) AS sub
 			JOIN lex_dictionary AS l2
 			ON l2.lemma = sub.lemma AND l2.pos = sub.pos AND (l2.gender = sub.gender OR (l2.gender IS NULL AND sub.gender IS NULL)) AND (l2.aspect = sub.aspect OR (l2.aspect IS NULL AND sub.aspect IS NULL))
 			GROUP BY lemma, pos, gender, aspect, source
 		) AS sub2
 		GROUP BY lemma, pos, gender, aspect`,
-		lemma,
+		lemma, lemma,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search the term: %w", err)
