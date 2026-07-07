@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/agnivade/levenshtein"
+	"github.com/czcorpus/cnc-gokit/collections"
 )
 
 type Source string
@@ -128,6 +129,9 @@ func SearchTypoSuggestions(ctx context.Context, db *sql.DB, term string) ([]stri
 		}
 		suggestions = append(suggestions, lemma)
 	}
+	suggestions = collections.SliceFilter(suggestions, func(v string, i int) bool {
+		return !strings.EqualFold(v, term)
+	})
 	return suggestions, nil
 }
 
