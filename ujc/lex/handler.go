@@ -106,20 +106,35 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	corpusId := ctx.Param("corpusId")
 	term := ctx.Param("term")
 
-	// search corpus for possible lemmata of the word
+	// search corpus for possible lemmata of the word, corpus is used for lematization and to get the dataset size for IPM calculation
 	bestMatches, err := actions.getQueryMatches(ctx, corpusId, term)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
 	}
 
-	// if empty corpus matches, use different sources
+	// if empty corpus matches, use ujc sources directly
 	if len(bestMatches) == 0 {
-		bestMatches, err = SearchMatches(ctx, actions.db.DB(), term, SourceASSC)
-		if err != nil {
-			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
-			return
+		for _, source := range actions.sourcePriority {
+			bestMatches, err = SearchMatches(ctx, actions.db.DB(), term, source)
+			if err != nil {
+				uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
+				return
+			}
+			if len(bestMatches) > 0 {
+				break
+			}
 		}
+	}
+
+	// no matches found in any source, return empty result
+	if len(bestMatches) == 0 {
+		ans := map[string]any{
+			"matches":     make([]dictionary.Lemma, 0),
+			"suggestions": make([]string, 0),
+		}
+		uniresp.WriteJSONResponse(ctx.Writer, ans)
+		return
 	}
 
 	// remove lemma duplicates

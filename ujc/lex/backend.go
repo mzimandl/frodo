@@ -118,7 +118,7 @@ func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source)
 	for row.Next() {
 		// just bare minimum for WaG to process the match
 		match := dictionary.Lemma{
-			ID:        fmt.Sprintf("match-%s-%d", source, i),
+			ID:        fmt.Sprintf("lex-%s-%d", source, i),
 			Forms:     make([]dictionary.Form, 0, 1),
 			Sublemmas: make([]dictionary.Sublemma, 0, 1),
 		}
