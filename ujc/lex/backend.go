@@ -72,18 +72,23 @@ const (
 
 var dictionaryTable = `
 CREATE TABLE %s (
-	group_id VARCHAR(100) COLLATE utf8mb4_bin,
+	group_id VARCHAR(100),
 	homonym INT DEFAULT 0,
 
-	lemma VARCHAR(100) COLLATE utf8mb4_bin NOT NULL,
+	lemma VARCHAR(100) NOT NULL,
 	pos VARCHAR(4) NOT NULL,
 	gender VARCHAR(2),
 	aspect VARCHAR(1),
 	
 	source VARCHAR(8) NOT NULL,
 	external_id VARCHAR(100) NOT NULL,
-	external_parent_id VARCHAR(100)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_czech_ci`
+	external_parent_id VARCHAR(100),
+
+	-- This column automatically calculates the normalized search key
+	search_key VARCHAR(100) COLLATE utf8mb4_unicode_ci GENERATED ALWAYS AS (
+		REPLACE(REPLACE(LOWER(lemma), 'y', 'i'), 'z', 's')
+	) STORED
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 func CreateTables(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 	tx, err := db.BeginTx(ctx, nil)
@@ -97,6 +102,33 @@ func CreateTables(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 	return tx, nil
+}
+
+func SearchTypoSuggestions(ctx context.Context, db *sql.DB, term string) ([]string, error) {
+	row, err := db.QueryContext(
+		ctx,
+		"SELECT DISTINCT lemma "+
+			"FROM lex_dictionary "+
+			"WHERE search_key = REPLACE(REPLACE(LOWER(?), 'y', 'i'), 'z', 's');",
+		term,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search match: %w", err)
+	}
+	defer row.Close()
+
+	suggestions := make([]string, 0, 5)
+	for row.Next() {
+		var lemma string
+		if err := row.Scan(&lemma); err != nil {
+			if err == sql.ErrNoRows {
+				return suggestions, nil
+			}
+			return nil, fmt.Errorf("failed to scan suggestions: %w", err)
+		}
+		suggestions = append(suggestions, lemma)
+	}
+	return suggestions, nil
 }
 
 func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source) ([]dictionary.Lemma, error) {

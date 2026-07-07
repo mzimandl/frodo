@@ -127,11 +127,17 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 		}
 	}
 
+	typoSuggestions, err := SearchTypoSuggestions(ctx, actions.db.DB(), term)
+	if err != nil {
+		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
+		return
+	}
+
 	// no matches found in any source, return empty result
 	if len(bestMatches) == 0 {
 		ans := map[string]any{
 			"matches":     make([]dictionary.Lemma, 0),
-			"suggestions": make([]string, 0),
+			"suggestions": typoSuggestions,
 		}
 		uniresp.WriteJSONResponse(ctx.Writer, ans)
 		return
@@ -226,7 +232,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 
 	ans := map[string]any{
 		"matches":     variants,
-		"suggestions": suggestions,
+		"suggestions": append(suggestions, typoSuggestions...),
 	}
 	uniresp.WriteJSONResponse(ctx.Writer, ans)
 }
