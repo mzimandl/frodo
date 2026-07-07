@@ -185,13 +185,21 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 		}
 		if corpusEntry == nil {
 			corpusEntry = &dictionary.Lemma{
-				ID:        fmt.Sprintf("match-%d", i),
+				ID:        fmt.Sprintf("lex-%d", i),
 				Lemma:     item.Lemma,
 				PoS:       item.Pos,
 				Specifier: cmp.Or(item.Gender, item.Aspect),
 				Forms:     []dictionary.Form{{Value: item.Lemma, Sublemma: item.Lemma}},
 				Sublemmas: []dictionary.Sublemma{{Value: item.Lemma}},
 			}
+		} else {
+			corpusEntry.Specifier = cmp.Or(corpusEntry.Specifier, cmp.Or(item.Gender, item.Aspect))
+			corpusEntry.Sublemmas = collections.SliceFilter(corpusEntry.Sublemmas, func(sublemma dictionary.Sublemma, i int) bool {
+				return sublemma.Value == item.Lemma
+			})
+			corpusEntry.Forms = collections.SliceFilter(corpusEntry.Forms, func(form dictionary.Form, i int) bool {
+				return form.Sublemma == item.Lemma
+			})
 		}
 		corpusEntry.ExtraData = LexExtraData{
 			CorpusId:   corpusId,
