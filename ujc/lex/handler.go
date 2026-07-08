@@ -160,7 +160,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 
 	// we get data for first match, the rest are suggestions
 	bestMatch := bestMatches[0]
-	suggestions := collections.SliceMap(bestMatches[1:], func(match dictionary.Lemma, i int) string { return match.Lemma })
+	corpSuggestions := collections.SliceMap(bestMatches[1:], func(match dictionary.Lemma, i int) string { return match.Lemma })
 
 	// find available sources for the best match, and select the main source based on the priority list
 	sources, err := SearchAvailableSources(ctx, actions.db.DB(), bestMatch.Lemma)
@@ -178,7 +178,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	if mainSource == "" {
 		ans := map[string]any{
 			"matches":     []dictionary.Lemma{bestMatch},
-			"suggestions": suggestions,
+			"suggestions": corpSuggestions,
 		}
 		uniresp.WriteJSONResponse(ctx.Writer, ans)
 		return
@@ -195,7 +195,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	if lexItems == nil {
 		ans := map[string]any{
 			"matches":     []dictionary.Lemma{bestMatch},
-			"suggestions": suggestions,
+			"suggestions": corpSuggestions,
 		}
 		uniresp.WriteJSONResponse(ctx.Writer, ans)
 		return
@@ -234,11 +234,12 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 			Variant:    item,
 		}
 		variants = append(variants, *corpusEntry)
+		corpSuggestions = collections.SliceFilter(corpSuggestions, func(suggestion string, i int) bool { return suggestion != item.Lemma })
 	}
 
 	ans := map[string]any{
 		"matches":     variants,
-		"suggestions": append(suggestions, typoSuggestions...),
+		"suggestions": append(corpSuggestions, typoSuggestions...),
 	}
 	uniresp.WriteJSONResponse(ctx.Writer, ans)
 }
