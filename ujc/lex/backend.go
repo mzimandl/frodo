@@ -172,7 +172,35 @@ func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source)
 	return matches, nil
 }
 
-func SearchVariants(ctx context.Context, db *sql.DB, lemma string) ([]LexItem, error) {
+func SearchAvailableSources(ctx context.Context, db *sql.DB, lemma string) ([]Source, error) {
+	row, err := db.QueryContext(
+		ctx,
+		"SELECT DISTINCT source "+
+			"FROM lex_dictionary "+
+			"WHERE lemma = ?;",
+		lemma,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search available sources: %w", err)
+	}
+	defer row.Close()
+
+	sources := make([]Source, 0)
+	for row.Next() {
+		var source Source
+		if err := row.Scan(&source); err != nil {
+			if err == sql.ErrNoRows {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("failed to scan available source: %w", err)
+		}
+		sources = append(sources, source)
+	}
+
+	return sources, nil
+}
+
+func SearchVariants(ctx context.Context, db *sql.DB, lemma string, source Source) ([]LexItem, error) {
 	row, err := db.QueryContext(
 		ctx,
 		`
@@ -186,20 +214,20 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string) ([]LexItem, e
 				SELECT DISTINCT lemma, pos, gender, aspect
 				FROM lex_dictionary AS l
 				JOIN (
-					SELECT DISTINCT group_id, source FROM lex_dictionary WHERE lemma = ? AND group_id IS NOT NULL
+					SELECT DISTINCT group_id, source FROM lex_dictionary WHERE lemma = ? AND source = ? AND group_id IS NOT NULL
 				) AS g
 				ON g.group_id = l.group_id AND g.source = l.source
 				UNION
 				SELECT DISTINCT lemma, pos, gender, aspect
 				FROM lex_dictionary AS l
-				WHERE lemma = ? AND group_id IS NULL
+				WHERE lemma = ? AND source = ? AND group_id IS NULL
 			) AS sub
 			JOIN lex_dictionary AS l2
 			ON l2.lemma = sub.lemma AND l2.pos = sub.pos AND (l2.gender = sub.gender OR (l2.gender IS NULL AND sub.gender IS NULL)) AND (l2.aspect = sub.aspect OR (l2.aspect IS NULL AND sub.aspect IS NULL))
 			GROUP BY lemma, pos, gender, aspect, source
 		) AS sub2
 		GROUP BY lemma, pos, gender, aspect`,
-		lemma, lemma,
+		lemma, source, lemma, source,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search the term: %w", err)

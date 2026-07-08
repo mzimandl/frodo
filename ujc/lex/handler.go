@@ -169,11 +169,36 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	bestMatch := bestMatches[0]
 	suggestions := collections.SliceMap(bestMatches[1:], func(match dictionary.Lemma, i int) string { return match.Lemma })
 
-	lexItems, err := SearchVariants(ctx, actions.db.DB(), bestMatch.Lemma)
+	// find available sources for the best match, and select the main source based on the priority list
+	sources, err := SearchAvailableSources(ctx, actions.db.DB(), bestMatch.Lemma)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
 	}
+	var mainSource Source
+	for _, source := range actions.sourcePriority {
+		if collections.SliceFindIndex(sources, func(s Source) bool { return s == source }) != -1 {
+			mainSource = source
+			break
+		}
+	}
+	if mainSource == "" {
+		ans := map[string]any{
+			"matches":     []dictionary.Lemma{bestMatch},
+			"suggestions": suggestions,
+		}
+		uniresp.WriteJSONResponse(ctx.Writer, ans)
+		return
+	}
+
+	// search for all variants of the best match in the main source
+	lexItems, err := SearchVariants(ctx, actions.db.DB(), bestMatch.Lemma, mainSource)
+	if err != nil {
+		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
+		return
+	}
+
+	// this should never occur, mainSource should be always available here
 	if lexItems == nil {
 		ans := map[string]any{
 			"matches":     []dictionary.Lemma{bestMatch},
@@ -183,20 +208,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 		return
 	}
 
-	var mainSource Source
-	// filter data by source priority
-	for _, source := range actions.sourcePriority {
-		filtered := collections.SliceFilter(lexItems, func(lexItem LexItem, i int) bool {
-			_, ok := lexItem.Sources[source]
-			return ok
-		})
-		if len(filtered) > 0 {
-			lexItems = filtered
-			mainSource = source
-			break
-		}
-	}
-
+	// for each variant, search for its entry in the corpus, if not found, create a new entry with minimal data
 	variants := make([]dictionary.Lemma, 0, len(lexItems))
 	for i, item := range lexItems {
 		corpusEntry, err := actions.searchCorpusLemma(ctx, corpusId, item.Lemma, item.Pos)
