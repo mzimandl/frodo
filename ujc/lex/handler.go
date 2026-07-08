@@ -45,29 +45,22 @@ type Handler struct {
 	sourcePriority []Source
 }
 
-func (actions *Handler) getQueryMatches(ctx context.Context, corpusId, term string) ([]dictionary.Lemma, error) {
+func (actions *Handler) findBestQueryMatches(ctx context.Context, corpusId, term string) ([]dictionary.Lemma, error) {
 	datasetSize, err := actions.dictActions.GetDatasetSize(corpusId)
 	if err != nil {
-		return nil, err
+		return []dictionary.Lemma{}, err
 	}
 
-	ans, err := dictionary.Search(
+	return dictionary.Search(
 		ctx,
 		actions.db,
 		corpusId,
 		dictionary.SearchWithAnyValue(term),
 		dictionary.SearchWithDatasetSizeForIPM(int(datasetSize)),
 	)
-	if err != nil {
-		return []dictionary.Lemma{}, fmt.Errorf("failed to find lemma: %w", err)
-	}
-	if len(ans) > 0 {
-		return ans, nil
-	}
-	return []dictionary.Lemma{}, nil
 }
 
-func (actions *Handler) searchCorpusLemma(ctx context.Context, corpusId, lemma, pos string) (*dictionary.Lemma, error) {
+func (actions *Handler) searchCorpusEntry(ctx context.Context, corpusId, lemma, pos string) (*dictionary.Lemma, error) {
 	if lemma == "" {
 		return nil, nil
 	}
@@ -107,7 +100,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	term := ctx.Param("term")
 
 	// search corpus for possible lemmata of the word, corpus is used for lematization and to get the dataset size for IPM calculation
-	bestMatches, err := actions.getQueryMatches(ctx, corpusId, term)
+	bestMatches, err := actions.findBestQueryMatches(ctx, corpusId, term)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
@@ -211,7 +204,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	// for each variant, search for its entry in the corpus, if not found, create a new entry with minimal data
 	variants := make([]dictionary.Lemma, 0, len(lexItems))
 	for i, item := range lexItems {
-		corpusEntry, err := actions.searchCorpusLemma(ctx, corpusId, item.Lemma, item.Pos)
+		corpusEntry, err := actions.searchCorpusEntry(ctx, corpusId, item.Lemma, item.Pos)
 		if err != nil {
 			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 			return
@@ -226,6 +219,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 				Sublemmas: []dictionary.Sublemma{{Value: item.Lemma}},
 			}
 		} else {
+			corpusEntry.ID = fmt.Sprintf("corp-%d", i)
 			corpusEntry.Specifier = cmp.Or(corpusEntry.Specifier, cmp.Or(item.Gender, item.Aspect))
 			corpusEntry.Sublemmas = collections.SliceFilter(corpusEntry.Sublemmas, func(sublemma dictionary.Sublemma, i int) bool {
 				return sublemma.Value == item.Lemma
