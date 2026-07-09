@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/agnivade/levenshtein"
+	"github.com/czcorpus/cnc-gokit/collections"
 )
 
 type Source string
@@ -72,18 +73,23 @@ const (
 
 var dictionaryTable = `
 CREATE TABLE %s (
-	group_id VARCHAR(100) COLLATE utf8mb4_bin,
+	group_id VARCHAR(100),
 	homonym INT DEFAULT 0,
 
-	lemma VARCHAR(100) COLLATE utf8mb4_bin NOT NULL,
+	lemma VARCHAR(100) NOT NULL,
 	pos VARCHAR(4) NOT NULL,
 	gender VARCHAR(2),
 	aspect VARCHAR(1),
 	
 	source VARCHAR(8) NOT NULL,
 	external_id VARCHAR(100) NOT NULL,
-	external_parent_id VARCHAR(100)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_czech_ci`
+	external_parent_id VARCHAR(100),
+
+	-- This column automatically calculates the normalized search key
+	search_key VARCHAR(100) COLLATE utf8mb4_unicode_ci GENERATED ALWAYS AS (
+		REPLACE(REPLACE(LOWER(lemma), 'y', 'i'), 'z', 's')
+	) STORED
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 func CreateTables(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 	tx, err := db.BeginTx(ctx, nil)
@@ -97,6 +103,36 @@ func CreateTables(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 	return tx, nil
+}
+
+func SearchTypoSuggestions(ctx context.Context, db *sql.DB, term string) ([]string, error) {
+	row, err := db.QueryContext(
+		ctx,
+		"SELECT DISTINCT lemma "+
+			"FROM lex_dictionary "+
+			"WHERE search_key = REPLACE(REPLACE(LOWER(?), 'y', 'i'), 'z', 's');",
+		term,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search match: %w", err)
+	}
+	defer row.Close()
+
+	suggestions := make([]string, 0, 5)
+	for row.Next() {
+		var lemma string
+		if err := row.Scan(&lemma); err != nil {
+			if err == sql.ErrNoRows {
+				return suggestions, nil
+			}
+			return nil, fmt.Errorf("failed to scan suggestions: %w", err)
+		}
+		suggestions = append(suggestions, lemma)
+	}
+	suggestions = collections.SliceFilter(suggestions, func(v string, i int) bool {
+		return !strings.EqualFold(v, term)
+	})
+	return suggestions, nil
 }
 
 func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source) ([]dictionary.Lemma, error) {
@@ -118,7 +154,7 @@ func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source)
 	for row.Next() {
 		// just bare minimum for WaG to process the match
 		match := dictionary.Lemma{
-			ID:        fmt.Sprintf("match-%s-%d", source, i),
+			ID:        fmt.Sprintf("lex-%s-%d", source, i),
 			Forms:     make([]dictionary.Form, 0, 1),
 			Sublemmas: make([]dictionary.Sublemma, 0, 1),
 		}
@@ -136,7 +172,35 @@ func SearchMatches(ctx context.Context, db *sql.DB, lemma string, source Source)
 	return matches, nil
 }
 
-func SearchVariants(ctx context.Context, db *sql.DB, lemma string) ([]LexItem, error) {
+func SearchAvailableSources(ctx context.Context, db *sql.DB, lemma string) ([]Source, error) {
+	row, err := db.QueryContext(
+		ctx,
+		"SELECT DISTINCT source "+
+			"FROM lex_dictionary "+
+			"WHERE lemma = ?;",
+		lemma,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search available sources: %w", err)
+	}
+	defer row.Close()
+
+	sources := make([]Source, 0)
+	for row.Next() {
+		var source Source
+		if err := row.Scan(&source); err != nil {
+			if err == sql.ErrNoRows {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("failed to scan available source: %w", err)
+		}
+		sources = append(sources, source)
+	}
+
+	return sources, nil
+}
+
+func SearchVariants(ctx context.Context, db *sql.DB, lemma string, source Source) ([]LexItem, error) {
 	row, err := db.QueryContext(
 		ctx,
 		`
@@ -150,20 +214,20 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string) ([]LexItem, e
 				SELECT DISTINCT lemma, pos, gender, aspect
 				FROM lex_dictionary AS l
 				JOIN (
-					SELECT DISTINCT group_id, source FROM lex_dictionary WHERE lemma = ? AND group_id IS NOT NULL
+					SELECT DISTINCT group_id, source FROM lex_dictionary WHERE lemma = ? AND source = ? AND group_id IS NOT NULL
 				) AS g
 				ON g.group_id = l.group_id AND g.source = l.source
 				UNION
 				SELECT DISTINCT lemma, pos, gender, aspect
 				FROM lex_dictionary AS l
-				WHERE lemma = ? AND group_id IS NULL
+				WHERE lemma = ? AND source = ? AND group_id IS NULL
 			) AS sub
 			JOIN lex_dictionary AS l2
 			ON l2.lemma = sub.lemma AND l2.pos = sub.pos AND (l2.gender = sub.gender OR (l2.gender IS NULL AND sub.gender IS NULL)) AND (l2.aspect = sub.aspect OR (l2.aspect IS NULL AND sub.aspect IS NULL))
 			GROUP BY lemma, pos, gender, aspect, source
 		) AS sub2
 		GROUP BY lemma, pos, gender, aspect`,
-		lemma, lemma,
+		lemma, source, lemma, source,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search the term: %w", err)

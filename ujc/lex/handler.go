@@ -45,29 +45,22 @@ type Handler struct {
 	sourcePriority []Source
 }
 
-func (actions *Handler) getQueryMatches(ctx context.Context, corpusId, term string) ([]dictionary.Lemma, error) {
+func (actions *Handler) findBestQueryMatches(ctx context.Context, corpusId, term string) ([]dictionary.Lemma, error) {
 	datasetSize, err := actions.dictActions.GetDatasetSize(corpusId)
 	if err != nil {
-		return nil, err
+		return []dictionary.Lemma{}, err
 	}
 
-	ans, err := dictionary.Search(
+	return dictionary.Search(
 		ctx,
 		actions.db,
 		corpusId,
 		dictionary.SearchWithAnyValue(term),
 		dictionary.SearchWithDatasetSizeForIPM(int(datasetSize)),
 	)
-	if err != nil {
-		return []dictionary.Lemma{}, fmt.Errorf("failed to find lemma: %w", err)
-	}
-	if len(ans) > 0 {
-		return ans, nil
-	}
-	return []dictionary.Lemma{}, nil
 }
 
-func (actions *Handler) searchCorpusLemma(ctx context.Context, corpusId, lemma, pos string) (*dictionary.Lemma, error) {
+func (actions *Handler) searchCorpusEntry(ctx context.Context, corpusId, lemma, pos string) (*dictionary.Lemma, error) {
 	if lemma == "" {
 		return nil, nil
 	}
@@ -106,20 +99,41 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	corpusId := ctx.Param("corpusId")
 	term := ctx.Param("term")
 
-	// search corpus for possible lemmata of the word
-	bestMatches, err := actions.getQueryMatches(ctx, corpusId, term)
+	// search corpus for possible lemmata of the word, corpus is used for lematization and to get the dataset size for IPM calculation
+	bestMatches, err := actions.findBestQueryMatches(ctx, corpusId, term)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
 	}
 
-	// if empty corpus matches, use different sources
+	// if empty corpus matches, use ujc sources directly
 	if len(bestMatches) == 0 {
-		bestMatches, err = SearchMatches(ctx, actions.db.DB(), term, SourceASSC)
-		if err != nil {
-			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
-			return
+		for _, source := range actions.sourcePriority {
+			bestMatches, err = SearchMatches(ctx, actions.db.DB(), term, source)
+			if err != nil {
+				uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
+				return
+			}
+			if len(bestMatches) > 0 {
+				break
+			}
 		}
+	}
+
+	typoSuggestions, err := SearchTypoSuggestions(ctx, actions.db.DB(), term)
+	if err != nil {
+		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
+		return
+	}
+
+	// no matches found in any source, return empty result
+	if len(bestMatches) == 0 {
+		ans := map[string]any{
+			"matches":     make([]dictionary.Lemma, 0),
+			"suggestions": typoSuggestions,
+		}
+		uniresp.WriteJSONResponse(ctx.Writer, ans)
+		return
 	}
 
 	// remove lemma duplicates
@@ -146,52 +160,73 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 
 	// we get data for first match, the rest are suggestions
 	bestMatch := bestMatches[0]
-	suggestions := collections.SliceMap(bestMatches[1:], func(match dictionary.Lemma, i int) string { return match.Lemma })
+	corpSuggestions := collections.SliceMap(bestMatches[1:], func(match dictionary.Lemma, i int) string { return match.Lemma })
 
-	lexItems, err := SearchVariants(ctx, actions.db.DB(), bestMatch.Lemma)
+	// find available sources for the best match, and select the main source based on the priority list
+	sources, err := SearchAvailableSources(ctx, actions.db.DB(), bestMatch.Lemma)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
 	}
-	if lexItems == nil {
+	var mainSource Source
+	for _, source := range actions.sourcePriority {
+		if collections.SliceFindIndex(sources, func(s Source) bool { return s == source }) != -1 {
+			mainSource = source
+			break
+		}
+	}
+	if mainSource == "" {
 		ans := map[string]any{
 			"matches":     []dictionary.Lemma{bestMatch},
-			"suggestions": suggestions,
+			"suggestions": corpSuggestions,
 		}
 		uniresp.WriteJSONResponse(ctx.Writer, ans)
 		return
 	}
 
-	var mainSource Source
-	// filter data by source priority
-	for _, source := range actions.sourcePriority {
-		filtered := collections.SliceFilter(lexItems, func(lexItem LexItem, i int) bool {
-			_, ok := lexItem.Sources[source]
-			return ok
-		})
-		if len(filtered) > 0 {
-			lexItems = filtered
-			mainSource = source
-			break
-		}
+	// search for all variants of the best match in the main source
+	lexItems, err := SearchVariants(ctx, actions.db.DB(), bestMatch.Lemma, mainSource)
+	if err != nil {
+		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
+		return
 	}
 
+	// this should never occur, mainSource should be always available here
+	if lexItems == nil {
+		ans := map[string]any{
+			"matches":     []dictionary.Lemma{bestMatch},
+			"suggestions": corpSuggestions,
+		}
+		uniresp.WriteJSONResponse(ctx.Writer, ans)
+		return
+	}
+
+	// for each variant, search for its entry in the corpus, if not found, create a new entry with minimal data
 	variants := make([]dictionary.Lemma, 0, len(lexItems))
 	for i, item := range lexItems {
-		corpusEntry, err := actions.searchCorpusLemma(ctx, corpusId, item.Lemma, item.Pos)
+		corpusEntry, err := actions.searchCorpusEntry(ctx, corpusId, item.Lemma, item.Pos)
 		if err != nil {
 			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 			return
 		}
 		if corpusEntry == nil {
 			corpusEntry = &dictionary.Lemma{
-				ID:        fmt.Sprintf("match-%d", i),
+				ID:        fmt.Sprintf("lex-%d", i),
 				Lemma:     item.Lemma,
 				PoS:       item.Pos,
 				Specifier: cmp.Or(item.Gender, item.Aspect),
 				Forms:     []dictionary.Form{{Value: item.Lemma, Sublemma: item.Lemma}},
 				Sublemmas: []dictionary.Sublemma{{Value: item.Lemma}},
 			}
+		} else {
+			corpusEntry.ID = fmt.Sprintf("corp-%d", i)
+			corpusEntry.Specifier = cmp.Or(corpusEntry.Specifier, cmp.Or(item.Gender, item.Aspect))
+			corpusEntry.Sublemmas = collections.SliceFilter(corpusEntry.Sublemmas, func(sublemma dictionary.Sublemma, i int) bool {
+				return sublemma.Value == item.Lemma
+			})
+			corpusEntry.Forms = collections.SliceFilter(corpusEntry.Forms, func(form dictionary.Form, i int) bool {
+				return form.Sublemma == item.Lemma
+			})
 		}
 		corpusEntry.ExtraData = LexExtraData{
 			CorpusId:   corpusId,
@@ -199,11 +234,12 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 			Variant:    item,
 		}
 		variants = append(variants, *corpusEntry)
+		corpSuggestions = collections.SliceFilter(corpSuggestions, func(suggestion string, i int) bool { return suggestion != item.Lemma })
 	}
 
 	ans := map[string]any{
 		"matches":     variants,
-		"suggestions": suggestions,
+		"suggestions": append(corpSuggestions, typoSuggestions...),
 	}
 	uniresp.WriteJSONResponse(ctx.Writer, ans)
 }
