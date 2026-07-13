@@ -157,9 +157,11 @@ func (a *Actions) registerJob(j GeneralJobInfo) chan GeneralJobInfo {
 		delete(a.detachedJobs, j.GetID())
 		a.detachedJobsLock.Unlock()
 	}
-	a.jobListLock.Lock()
-	a.jobList[j.GetID()] = j
-	a.jobListLock.Unlock()
+	func() {
+		a.jobListLock.Lock()
+		defer a.jobListLock.Unlock()
+		a.jobList[j.GetID()] = j
+	}()
 	syncUpdates := make(chan GeneralJobInfo, 100)
 	go func() {
 		var item GeneralJobInfo
@@ -190,15 +192,18 @@ func (a *Actions) registerJob(j GeneralJobInfo) chan GeneralJobInfo {
 func (a *Actions) JobList(ctx *gin.Context) {
 	unOnly := ctx.Request.URL.Query().Get("unfinishedOnly") == "1"
 	if ctx.Request.URL.Query().Get("compact") == "1" {
-		a.jobListLock.RLock()
-		ans := make(JobInfoListCompact, 0, len(a.jobList))
-		for _, v := range a.jobList {
-			if !unOnly || !v.IsFinished() {
-				item := v.CompactVersion()
-				ans = append(ans, &item)
+		ans := func() JobInfoListCompact {
+			a.jobListLock.RLock()
+			defer a.jobListLock.RUnlock()
+			ans := make(JobInfoListCompact, 0, len(a.jobList))
+			for _, v := range a.jobList {
+				if !unOnly || !v.IsFinished() {
+					item := v.CompactVersion()
+					ans = append(ans, &item)
+				}
 			}
-		}
-		a.jobListLock.RUnlock()
+			return ans
+		}()
 		sort.Sort(sort.Reverse(ans))
 		uniresp.WriteJSONResponse(ctx.Writer, ans)
 
@@ -221,9 +226,11 @@ func (a *Actions) JobList(ctx *gin.Context) {
 // @Success      200 {object} any
 // @Router       /jobs/{jobId} [get]
 func (a *Actions) JobInfo(ctx *gin.Context) {
-	a.jobListLock.RLock()
-	job := FindJob(a.jobList, ctx.Param("jobId"))
-	a.jobListLock.RUnlock()
+	job := func() GeneralJobInfo {
+		a.jobListLock.RLock()
+		defer a.jobListLock.RUnlock()
+		return FindJob(a.jobList, ctx.Param("jobId"))
+	}()
 	if job != nil {
 		if ctx.Request.URL.Query().Get("compact") == "1" {
 			uniresp.WriteJSONResponse(ctx.Writer, job.CompactVersion())
@@ -246,9 +253,11 @@ func (a *Actions) JobInfo(ctx *gin.Context) {
 // @Failure      404 {object} uniresp.ActionError
 // @Router       /jobs/{jobId} [delete]
 func (a *Actions) Delete(ctx *gin.Context) {
-	a.jobListLock.RLock()
-	job := FindJob(a.jobList, ctx.Param("jobId"))
-	a.jobListLock.RUnlock()
+	job := func() GeneralJobInfo {
+		a.jobListLock.RLock()
+		defer a.jobListLock.RUnlock()
+		return FindJob(a.jobList, ctx.Param("jobId"))
+	}()
 	if job != nil {
 		a.jobStop <- job.GetID()
 		uniresp.WriteJSONResponse(ctx.Writer, job)
@@ -266,9 +275,11 @@ func (a *Actions) Delete(ctx *gin.Context) {
 // @Failure      404 {object} uniresp.ActionError
 // @Router       /jobs/{jobId}/clearIfFinished [get]
 func (a *Actions) ClearIfFinished(ctx *gin.Context) {
-	a.jobListLock.Lock()
-	job, removed := ClearFinishedJob(a.jobList, ctx.Param("jobId"))
-	a.jobListLock.Unlock()
+	job, removed := func() (GeneralJobInfo, bool) {
+		a.jobListLock.Lock()
+		defer a.jobListLock.Unlock()
+		return ClearFinishedJob(a.jobList, ctx.Param("jobId"))
+	}()
 	if job != nil {
 		uniresp.WriteJSONResponse(ctx.Writer, map[string]any{"removed": removed, "jobInfo": job})
 
@@ -313,14 +324,14 @@ func (a *Actions) ClearDetachedJob(jobID string) bool {
 }
 
 func (a *Actions) numOfUnfinishedJobs() int {
-	ans := 0
 	a.jobListLock.RLock()
+	defer a.jobListLock.RUnlock()
+	ans := 0
 	for _, v := range a.jobList {
 		if !v.IsFinished() {
 			ans++
 		}
 	}
-	a.jobListLock.RUnlock()
 	return ans
 }
 
@@ -354,9 +365,11 @@ func (a *Actions) GetJob(jobID string) (GeneralJobInfo, bool) {
 // @Router       /jobs/{jobId}/emailNotification/{address} [put]
 func (a *Actions) AddNotification(ctx *gin.Context) {
 	jobID := ctx.Param("jobId")
-	a.jobListLock.RLock()
-	job := FindJob(a.jobList, jobID)
-	a.jobListLock.RUnlock()
+	job := func() GeneralJobInfo {
+		a.jobListLock.RLock()
+		defer a.jobListLock.RUnlock()
+		return FindJob(a.jobList, jobID)
+	}()
 	if job != nil {
 		recipients, ok := a.notificationRecipients[jobID]
 		if !ok {
@@ -395,9 +408,11 @@ func (a *Actions) AddNotification(ctx *gin.Context) {
 // @Router       /jobs/{jobId}/emailNotification [get]
 func (a *Actions) GetNotifications(ctx *gin.Context) {
 	jobID := ctx.Param("jobId")
-	a.jobListLock.RLock()
-	job := FindJob(a.jobList, jobID)
-	a.jobListLock.RUnlock()
+	job := func() GeneralJobInfo {
+		a.jobListLock.RLock()
+		defer a.jobListLock.RUnlock()
+		return FindJob(a.jobList, jobID)
+	}()
 	if job != nil {
 		recipients, ok := a.notificationRecipients[job.GetID()]
 		resp := struct {
@@ -425,9 +440,11 @@ func (a *Actions) GetNotifications(ctx *gin.Context) {
 // @Router       /jobs/{jobId}/emailNotification/{address} [get]
 func (a *Actions) CheckNotification(ctx *gin.Context) {
 	jobID := ctx.Param("jobId")
-	a.jobListLock.RLock()
-	job := FindJob(a.jobList, jobID)
-	a.jobListLock.RUnlock()
+	job := func() GeneralJobInfo {
+		a.jobListLock.RLock()
+		defer a.jobListLock.RUnlock()
+		return FindJob(a.jobList, jobID)
+	}()
 	if job != nil {
 		registered := false
 		recipients, ok := a.notificationRecipients[jobID]
@@ -462,9 +479,11 @@ func (a *Actions) CheckNotification(ctx *gin.Context) {
 // @Router       /jobs/{jobId}/emailNotification/{address} [delete]
 func (a *Actions) RemoveNotification(ctx *gin.Context) {
 	jobID := ctx.Param("jobId")
-	a.jobListLock.RLock()
-	job := FindJob(a.jobList, jobID)
-	a.jobListLock.RUnlock()
+	job := func() GeneralJobInfo {
+		a.jobListLock.RLock()
+		defer a.jobListLock.RUnlock()
+		return FindJob(a.jobList, jobID)
+	}()
 	if job != nil {
 		recipients, ok := a.notificationRecipients[jobID]
 		if ok {
@@ -565,50 +584,52 @@ func NewActions(
 		for {
 			select {
 			case <-ticker2.C:
-				ans.jobQueueLock.Lock()
-				numUnfinished := ans.numOfUnfinishedJobs()
-				// Now calling again the numOfUnfinishedJobs() may return
-				// different value but it can be only a value smaller than
-				// numUnfinished as the change can be only caused by another
-				// job being finished (adding of jobs for execution happens
-				// only here and is not concurrent).
-				if ans.conf.MaxNumConcurrentJobs > numUnfinished {
-					// first, let's check whether the current job depends
-					// on other job(s) (= aka 'parents') and delay it in case
-					// parents are not ready yet
-					nextJobID, err := ans.jobQueue.PeekID()
-					if err != nil {
-						// empty queue
-					} else if _, ok := ans.jobDeps[nextJobID]; ok { // job with dependencies
-
-						mustWait, err := ans.jobDeps.MustWait(nextJobID)
+				func() {
+					ans.jobQueueLock.Lock()
+					defer ans.jobQueueLock.Unlock()
+					numUnfinished := ans.numOfUnfinishedJobs()
+					// Now calling again the numOfUnfinishedJobs() may return
+					// different value but it can be only a value smaller than
+					// numUnfinished as the change can be only caused by another
+					// job being finished (adding of jobs for execution happens
+					// only here and is not concurrent).
+					if ans.conf.MaxNumConcurrentJobs > numUnfinished {
+						// first, let's check whether the current job depends
+						// on other job(s) (= aka 'parents') and delay it in case
+						// parents are not ready yet
+						nextJobID, err := ans.jobQueue.PeekID()
 						if err != nil {
-							err := fmt.Errorf("failed to obtain waiting status for job %s: %w", nextJobID, err)
-							ans.dequeueJobAsFailed(err)
+							// empty queue
+						} else if _, ok := ans.jobDeps[nextJobID]; ok { // job with dependencies
 
-						} else if mustWait {
-							ans.jobQueue.DelayNext()
-
-						} else {
-							hasFailedParent, err := ans.jobDeps.HasFailedParent(nextJobID)
+							mustWait, err := ans.jobDeps.MustWait(nextJobID)
 							if err != nil {
-								err := fmt.Errorf("failed to check parents of job %s: %w", nextJobID, err)
+								err := fmt.Errorf("failed to obtain waiting status for job %s: %w", nextJobID, err)
 								ans.dequeueJobAsFailed(err)
 
-							} else if hasFailedParent {
-								err := fmt.Errorf("failed to run job %s due to failed parent(s): %w", nextJobID, err)
-								ans.dequeueJobAsFailed(err)
+							} else if mustWait {
+								ans.jobQueue.DelayNext()
 
 							} else {
-								ans.dequeueAndRunJob()
-							}
-						}
+								hasFailedParent, err := ans.jobDeps.HasFailedParent(nextJobID)
+								if err != nil {
+									err := fmt.Errorf("failed to check parents of job %s: %w", nextJobID, err)
+									ans.dequeueJobAsFailed(err)
 
-					} else { // job without deps
-						ans.dequeueAndRunJob()
+								} else if hasFailedParent {
+									err := fmt.Errorf("failed to run job %s due to failed parent(s): %w", nextJobID, err)
+									ans.dequeueJobAsFailed(err)
+
+								} else {
+									ans.dequeueAndRunJob()
+								}
+							}
+
+						} else { // job without deps
+							ans.dequeueAndRunJob()
+						}
 					}
-					ans.jobQueueLock.Unlock()
-				}
+				}()
 			case <-ctx.Done():
 				ticker.Stop()
 				return
@@ -620,21 +641,34 @@ func NewActions(
 		for upd := range ans.tableUpdate {
 			switch upd.action {
 			case tableActionUpdateJob:
-				ans.jobListLock.Lock()
-				currErr := ans.jobList[upd.itemID].GetError()
-				// make sure we keep the current error even if new status
-				// comes without one
-				if currErr != nil && upd.data.GetError() == nil {
-					ans.jobList[upd.itemID] = upd.data.WithError(currErr)
+				func() {
+					ans.jobListLock.Lock()
+					defer ans.jobListLock.Unlock()
+					curr, ok := ans.jobList[upd.itemID]
+					if !ok {
+						log.Warn().Str("jobId", upd.itemID).Msg("received update for an unknown/removed job")
+						return
+					}
+					// make sure we keep the current error even if new status
+					// comes without one
+					if currErr := curr.GetError(); currErr != nil && upd.data.GetError() == nil {
+						ans.jobList[upd.itemID] = upd.data.WithError(currErr)
 
-				} else {
-					ans.jobList[upd.itemID] = upd.data
-				}
-				ans.jobListLock.Unlock()
+					} else {
+						ans.jobList[upd.itemID] = upd.data
+					}
+				}()
 			case tableActionFinishJob:
-				ans.jobListLock.Lock()
-				ans.jobList[upd.itemID] = ans.jobList[upd.itemID].AsFinished()
-				ans.jobListLock.Unlock()
+				func() {
+					ans.jobListLock.Lock()
+					defer ans.jobListLock.Unlock()
+					curr, ok := ans.jobList[upd.itemID]
+					if !ok {
+						log.Warn().Str("jobId", upd.itemID).Msg("received finish for an unknown/removed job")
+						return
+					}
+					ans.jobList[upd.itemID] = curr.AsFinished()
+				}()
 				ans.jobDeps.SetParentFinished(upd.itemID, upd.data.GetError() != nil)
 				recipients, ok := ans.notificationRecipients[upd.itemID]
 				logAction := log.Info().Str("jobId", upd.itemID)
@@ -682,9 +716,11 @@ func NewActions(
 					}
 				}
 			case tableActionClearOldJobs:
-				ans.jobListLock.Lock()
-				clearOldJobs(ans.jobList)
-				ans.jobListLock.Unlock()
+				func() {
+					ans.jobListLock.Lock()
+					defer ans.jobListLock.Unlock()
+					clearOldJobs(ans.jobList)
+				}()
 			}
 
 		}
