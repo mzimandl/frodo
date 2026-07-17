@@ -17,8 +17,9 @@
 package lex
 
 type LexID struct {
-	ParentID string `json:"parentId"`
-	ID       string `json:"id"`
+	ParentID   string `json:"parentId"`
+	ID         string `json:"id"`
+	GroupOrder int    `json:"groupOrder"`
 }
 
 type LexItem struct {

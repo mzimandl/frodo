@@ -74,7 +74,8 @@ const (
 var dictionaryTable = `
 CREATE TABLE %s (
 	group_id VARCHAR(100),
-	homonym INT DEFAULT 0,
+	homonym TINYINT DEFAULT 0 NOT NULL,
+	group_order TINYINT DEFAULT 0 NOT NULL,
 
 	lemma VARCHAR(100) NOT NULL,
 	pos VARCHAR(4) NOT NULL,
@@ -208,7 +209,7 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string, source Source
 		SELECT lemma, pos, gender, aspect, JSON_OBJECTAGG(source, idents) AS sources
 		FROM (
 			-- get external source identifiers for the lemma and its variants
-			SELECT sub.lemma as lemma, sub.pos as pos, sub.gender as gender, sub.aspect as aspect, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id) ORDER BY homonym) AS idents
+			SELECT sub.lemma as lemma, sub.pos as pos, sub.gender as gender, sub.aspect as aspect, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id, 'groupOrder', group_order) ORDER BY homonym) AS idents
 			FROM (
 				-- find available variants, get exact lemmata and their variants based on group_id and source
 				SELECT DISTINCT lemma, pos, gender, aspect
