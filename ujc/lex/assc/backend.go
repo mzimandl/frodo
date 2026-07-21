@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"fmt"
 	"frodo/ujc/lex"
+	"strconv"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -38,7 +39,11 @@ func InsertDictChunk(ctx context.Context, tx *sql.Tx, data []SrcFileRow) error {
 		aspect := sql.NullString{String: v.Aspect, Valid: v.Aspect != ""}
 		plurality := sql.NullString{String: v.Plurality, Valid: v.Plurality != ""}
 		parentID := sql.NullString{String: v.ParentID, Valid: v.ParentID != ""}
-		dataArgs = append(dataArgs, v.EntryID, v.Homonymy, v.SortOrder, v.Variant, v.Pos, gender, aspect, v.Uninflected, plurality, lex.SourceASSC, v.EntryID, parentID)
+		sortOrder, err := strconv.Atoi(v.SortOrder)
+		if err != nil {
+			log.Fatal().Msgf("Invalid sort order %s", v.SortOrder)
+		}
+		dataArgs = append(dataArgs, v.EntryID, v.Homonymy, sortOrder-1, v.Variant, v.Pos, gender, aspect, v.Uninflected, plurality, lex.SourceASSC, v.EntryID, parentID)
 	}
 	_, err := tx.ExecContext(
 		ctx,
@@ -56,10 +61,14 @@ func InsertDictChunk(ctx context.Context, tx *sql.Tx, data []SrcFileRow) error {
 			aspect := sql.NullString{String: item.Aspect, Valid: item.Aspect != ""}
 			plurality := sql.NullString{String: item.Plurality, Valid: item.Plurality != ""}
 			parentID := sql.NullString{String: item.ParentID, Valid: item.ParentID != ""}
-			_, err := tx.ExecContext(
+			sortOrder, err := strconv.Atoi(item.SortOrder)
+			if err != nil {
+				log.Fatal().Msgf("Invalid sort order %s", item.SortOrder)
+			}
+			_, err = tx.ExecContext(
 				ctx,
 				"INSERT INTO lex_dictionary (group_id, homonym, group_order, lemma, pos, gender, aspect, uninflected, plurality, source, external_id, external_parent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ",
-				item.EntryID, item.Homonymy, item.SortOrder, item.Variant, item.Pos, gender, aspect, item.Uninflected, plurality, lex.SourceASSC, item.EntryID, parentID,
+				item.EntryID, item.Homonymy, sortOrder-1, item.Variant, item.Pos, gender, aspect, item.Uninflected, plurality, lex.SourceASSC, item.EntryID, parentID,
 			)
 			if err != nil {
 				log.Error().Err(err).Any("values", item).Msg("failed to insert single row, ignoring")
