@@ -14,14 +14,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ijp
+package assc
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
 	"frodo/ujc/lex"
-	"strconv"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -34,23 +33,17 @@ func InsertDictChunk(ctx context.Context, tx *sql.Tx, data []SrcFileRow) error {
 		if i > 0 {
 			insTpl.WriteString(", ")
 		}
-		insTpl.WriteString("(?, ?, ?, ?, ?, ?, ?, ?)")
-		groupId := sql.NullString{String: v.GroupID, Valid: v.GroupID != ""}
-		homonym := 0
-		externalIDParts := strings.Split(v.ExternalID, "_")
-		if len(externalIDParts) > 1 {
-			if h, err := strconv.Atoi(externalIDParts[len(externalIDParts)-1]); err == nil {
-				homonym = h
-			}
-		}
+		insTpl.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		gender := sql.NullString{String: v.Gender, Valid: v.Gender != ""}
 		aspect := sql.NullString{String: v.Aspect, Valid: v.Aspect != ""}
-		dataArgs = append(dataArgs, groupId, homonym, v.Variant, v.Pos, gender, aspect, lex.SourceIJP, v.ExternalID)
+		plurality := sql.NullString{String: v.Plurality, Valid: v.Plurality != ""}
+		parentID := sql.NullString{String: v.ParentID, Valid: v.ParentID != ""}
+		dataArgs = append(dataArgs, v.EntryID, v.Homonymy, v.SortOrder, v.Variant, v.Pos, gender, aspect, v.Uninflected, plurality, lex.SourceASSC, v.EntryID, parentID)
 	}
 	_, err := tx.ExecContext(
 		ctx,
 		fmt.Sprintf(
-			"INSERT INTO lex_dictionary (group_id, homonym, lemma, pos, gender, aspect, source, external_id) VALUES %s",
+			"INSERT INTO lex_dictionary (group_id, homonym, group_order, lemma, pos, gender, aspect, uninflected, plurality, source, external_id, external_parent_id) VALUES %s",
 			insTpl.String(),
 		),
 		dataArgs...,
@@ -59,20 +52,14 @@ func InsertDictChunk(ctx context.Context, tx *sql.Tx, data []SrcFileRow) error {
 		log.Warn().Err(err).Msg("failed to insert row chunk, trying one by one")
 		// try one by one and ignore errors:
 		for _, item := range data {
-			groupId := sql.NullString{String: item.GroupID, Valid: item.GroupID != ""}
-			homonym := 0
-			externalIDParts := strings.Split(item.ExternalID, "_")
-			if len(externalIDParts) > 1 {
-				if h, err := strconv.Atoi(externalIDParts[len(externalIDParts)-1]); err == nil {
-					homonym = h
-				}
-			}
 			gender := sql.NullString{String: item.Gender, Valid: item.Gender != ""}
 			aspect := sql.NullString{String: item.Aspect, Valid: item.Aspect != ""}
+			plurality := sql.NullString{String: item.Plurality, Valid: item.Plurality != ""}
+			parentID := sql.NullString{String: item.ParentID, Valid: item.ParentID != ""}
 			_, err := tx.ExecContext(
 				ctx,
-				"INSERT INTO lex_dictionary (group_id, homonym, lemma, pos, gender, aspect, source, external_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ",
-				groupId, homonym, item.Variant, item.Pos, gender, aspect, lex.SourceIJP, item.ExternalID,
+				"INSERT INTO lex_dictionary (group_id, homonym, group_order, lemma, pos, gender, aspect, uninflected, plurality, source, external_id, external_parent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ",
+				item.EntryID, item.Homonymy, item.SortOrder, item.Variant, item.Pos, gender, aspect, item.Uninflected, plurality, lex.SourceASSC, item.EntryID, parentID,
 			)
 			if err != nil {
 				log.Error().Err(err).Any("values", item).Msg("failed to insert single row, ignoring")

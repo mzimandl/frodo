@@ -81,6 +81,8 @@ CREATE TABLE %s (
 	pos VARCHAR(4) NOT NULL,
 	gender VARCHAR(2),
 	aspect VARCHAR(1),
+	uninflected TINYINT DEFAULT 0 NOT NULL,
+	plurality VARCHAR(32),
 	
 	source VARCHAR(8) NOT NULL,
 	external_id VARCHAR(100) NOT NULL,
@@ -206,28 +208,28 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string, source Source
 		ctx,
 		`
 		-- aggregate external ids to JSON array for each lemma and its variants, grouped by source
-		SELECT lemma, pos, gender, aspect, JSON_OBJECTAGG(source, idents) AS sources
+		SELECT lemma, pos, gender, aspect, uninflected, JSON_OBJECTAGG(source, idents) AS sources
 		FROM (
 			-- get external source identifiers for the lemma and its variants
-			SELECT sub.lemma as lemma, sub.pos as pos, sub.gender as gender, sub.aspect as aspect, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id, 'groupOrder', group_order) ORDER BY homonym) AS idents
+			SELECT sub.lemma as lemma, sub.pos as pos, sub.gender as gender, sub.aspect as aspect, sub.uninflected as uninflected, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id, 'groupOrder', group_order) ORDER BY homonym) AS idents
 			FROM (
 				-- find available variants, get exact lemmata and their variants based on group_id and source
-				SELECT DISTINCT lemma, pos, gender, aspect
+				SELECT DISTINCT lemma, pos, gender, aspect, uninflected
 				FROM lex_dictionary AS l
 				JOIN (
 					SELECT DISTINCT group_id, source FROM lex_dictionary WHERE lemma = ? AND source = ? AND group_id IS NOT NULL
 				) AS g
 				ON g.group_id = l.group_id AND g.source = l.source
 				UNION
-				SELECT DISTINCT lemma, pos, gender, aspect
+				SELECT DISTINCT lemma, pos, gender, aspect, uninflected
 				FROM lex_dictionary AS l
 				WHERE lemma = ? AND source = ? AND group_id IS NULL
 			) AS sub
 			JOIN lex_dictionary AS l2
-			ON l2.lemma = sub.lemma AND l2.pos = sub.pos AND (l2.gender = sub.gender OR (l2.gender IS NULL AND sub.gender IS NULL)) AND (l2.aspect = sub.aspect OR (l2.aspect IS NULL AND sub.aspect IS NULL))
-			GROUP BY lemma, pos, gender, aspect, source
+			ON l2.lemma = sub.lemma AND l2.pos = sub.pos AND (l2.gender = sub.gender OR (l2.gender IS NULL AND sub.gender IS NULL)) AND (l2.aspect = sub.aspect OR (l2.aspect IS NULL AND sub.aspect IS NULL)) AND l2.uninflected = sub.uninflected
+			GROUP BY lemma, pos, gender, aspect, uninflected, source
 		) AS sub2
-		GROUP BY lemma, pos, gender, aspect`,
+		GROUP BY lemma, pos, gender, aspect, uninflected`,
 		lemma, source, lemma, source,
 	)
 	if err != nil {
@@ -238,14 +240,16 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string, source Source
 	data := make([]LexItem, 0)
 	for row.Next() {
 		var genderArg, aspectArg sql.NullString
+		var uninflectedArg int64
 		var jsonSources string
 		item := LexItem{}
-		if err := row.Scan(&item.Lemma, &item.Pos, &genderArg, &aspectArg, &jsonSources); err != nil {
+		if err := row.Scan(&item.Lemma, &item.Pos, &genderArg, &aspectArg, &uninflectedArg, &jsonSources); err != nil {
 			if err == sql.ErrNoRows {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("failed to scan the term: %w", err)
 		}
+		item.Uninflected = uninflectedArg != 0
 		if genderArg.Valid {
 			item.Gender = genderArg.String
 		}
@@ -287,4 +291,16 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string, source Source
 	})
 
 	return data, nil
+}
+
+func PruneData(ctx context.Context, tx *sql.Tx, source Source) error {
+	_, err := tx.ExecContext(
+		ctx,
+		"DELETE FROM lex_dictionary WHERE source = ?",
+		source,
+	)
+	if err != nil {
+		return err
+	}
+	return nil
 }

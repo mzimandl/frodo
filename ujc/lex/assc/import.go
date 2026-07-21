@@ -14,23 +14,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package assc
 
 import (
 	"bufio"
 	"context"
 	"fmt"
-	"frodo/ujc/lex/ijp"
 	"os"
 	"strings"
+
+	"github.com/czcorpus/cnc-gokit/util"
 )
 
 const (
 	procChunkSize = 5
 )
 
+type SrcFileRow struct {
+	ParentID    string
+	EntryID     string
+	Type        string
+	SortOrder   string
+	Variant     string
+	LemmaType   string
+	Homonymy    string
+	Pos         string
+	Gender      string
+	Aspect      string
+	Uninflected string
+	Plurality   string
+	Changed     string
+}
+
 type importDataChunk struct {
-	Items []ijp.SrcFileRow
+	Items []SrcFileRow
 	Error error
 }
 
@@ -48,7 +65,7 @@ func ReadTSV(ctx context.Context, path string) (<-chan importDataChunk, error) {
 		lineNum := 0
 		scanner.Scan() // first line header // TODO configurable
 
-		chunk := make([]ijp.SrcFileRow, procChunkSize)
+		chunk := make([]SrcFileRow, procChunkSize)
 		i := 0
 		for scanner.Scan() {
 			lineNum++
@@ -57,18 +74,24 @@ func ReadTSV(ctx context.Context, path string) (<-chan importDataChunk, error) {
 				continue
 			}
 			fields := strings.Split(line, "\t")
-			if len(fields) != 7 {
-				ans <- importDataChunk{Error: fmt.Errorf("line %d: expected 7 fields, got %d", lineNum, len(fields))}
+			if len(fields) != 13 {
+				ans <- importDataChunk{Error: fmt.Errorf("line %d: expected 13 fields, got %d", lineNum, len(fields))}
 				return
 			}
-			chunk[i] = ijp.SrcFileRow{
-				GroupID:    fields[0],
-				ExternalID: fields[1],
-				Variant:    fields[2],
-				Also:       fields[3],
-				Pos:        fields[4],
-				Gender:     fields[5],
-				Aspect:     fields[6],
+			chunk[i] = SrcFileRow{
+				ParentID:    fields[0],
+				EntryID:     fields[1],
+				Type:        fields[2],
+				SortOrder:   fields[3],
+				Variant:     fields[4],
+				LemmaType:   fields[5],
+				Homonymy:    fields[6],
+				Pos:         fields[7],
+				Gender:      util.Ternary(fields[8] == "-", "", fields[8]),
+				Aspect:      util.Ternary(fields[9] == "-", "", fields[9]),
+				Uninflected: util.Ternary(fields[10] == "", "0", "1"),
+				Plurality:   fields[11],
+				Changed:     fields[12],
 			}
 			if i == procChunkSize-1 {
 				select {
@@ -79,7 +102,7 @@ func ReadTSV(ctx context.Context, path string) (<-chan importDataChunk, error) {
 
 				ans <- importDataChunk{Items: chunk}
 				i = 0
-				chunk = make([]ijp.SrcFileRow, procChunkSize)
+				chunk = make([]SrcFileRow, procChunkSize)
 
 			} else {
 				i++

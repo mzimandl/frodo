@@ -27,6 +27,8 @@ type LexItem struct {
 	Pos            string             `json:"pos"`
 	Gender         string             `json:"gender"`
 	Aspect         string             `json:"aspect"`
+	Uninflected    bool               `json:"uninflected"`
+	Plurality      string             `json:"pluarlity"`
 	Sources        map[Source][]LexID `json:"sources"`
 	relevanceScore int
 }
