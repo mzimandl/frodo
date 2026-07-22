@@ -55,7 +55,7 @@ const (
 
 	GenderMascAnim     = "M"
 	GenderMascInan     = "I"
-	GenderMascAnimInan = "MI"
+	GenderMascAnimInan = "B"
 	GenderFem          = "F"
 	GenderNeut         = "N"
 
@@ -64,7 +64,7 @@ const (
 	AspectBoth = "B"
 
 	POSOrder    = "NAPCVDRJTI"
-	GenderOrder = "MIFN"
+	GenderOrder = "MIBFN"
 	AspectOrder = "PIB"
 
 	TableName = "lex_dictionary"
@@ -274,6 +274,9 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string, mainSource So
 		item.Uninflected = uninflectedArg != 0
 		if genderArg.Valid {
 			item.Gender = genderArg.String
+			if item.Gender == GenderMascAnimInan {
+				item.Gender = "MI"
+			}
 		}
 		if aspectArg.Valid {
 			item.Aspect = aspectArg.String
