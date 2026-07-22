@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"frodo/cnf"
 	"frodo/db/mysql"
+	"frodo/ujc/lex"
+	"frodo/ujc/lex/assc"
 	"frodo/ujc/lex/ijp"
 	"os"
 	"os/signal"
@@ -68,12 +70,12 @@ func runIjpImport(args importArgs) {
 	}
 
 	log.Info().Msg("Pruning old IJP data")
-	if err := ijp.PruneData(ctx, tx); err != nil {
+	if err := lex.PruneData(ctx, tx, lex.SourceIJP); err != nil {
 		log.Fatal().Err(err).Msg("failed to import data")
 	}
 
 	log.Info().Msg("Reading IJP data from TSV file")
-	data, err := ReadTSV(ctx, args.inputFile)
+	data, err := ijp.ReadTSV(ctx, args.inputFile)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to import data")
 	}
@@ -91,7 +93,51 @@ func runIjpImport(args importArgs) {
 }
 
 func runIjpUpdate(args updateArgs) error {
-	fmt.Printf("Running update: targetID=%s, force=%v\n", args.targetID, args.force)
+	fmt.Printf("Running IJP update: targetID=%s, force=%v\n", args.targetID, args.force)
+	// TODO: implement update logic
+	return nil
+}
+
+func runAsscImport(args importArgs) {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	conf := cnf.LoadConfig(args.configPath)
+	db, err := mysql.OpenDB(*conf.LiveAttrs.DB)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to import data")
+	}
+
+	tx, err := db.DB().BeginTx(ctx, nil)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to import data")
+	}
+
+	log.Info().Msg("Pruning old ASSC data")
+	if err := lex.PruneData(ctx, tx, lex.SourceASSC); err != nil {
+		log.Fatal().Err(err).Msg("failed to import data")
+	}
+
+	log.Info().Msg("Reading ASSC data from TSV file")
+	data, err := assc.ReadTSV(ctx, args.inputFile)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to import data")
+	}
+
+	for chunk := range data {
+		if chunk.Error != nil {
+			log.Fatal().Err(chunk.Error).Msg("failed to import data")
+		}
+		if err := assc.InsertDictChunk(ctx, tx, chunk.Items); err != nil {
+			log.Fatal().Err(err).Msg("failed to import data")
+		}
+	}
+	tx.Commit()
+
+}
+
+func runAsscUpdate(args updateArgs) error {
+	fmt.Printf("Running ASSC update: targetID=%s, force=%v\n", args.targetID, args.force)
 	// TODO: implement update logic
 	return nil
 }
@@ -135,6 +181,8 @@ func main() {
 		switch importOpts.serviceType {
 		case "ijp":
 			runIjpImport(importOpts)
+		case "assc":
+			runAsscImport(importOpts)
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown service type: %s\n", importOpts.serviceType)
 			os.Exit(1)
@@ -149,6 +197,8 @@ func main() {
 		switch updateOpts.serviceType {
 		case "ijp":
 			err = runIjpUpdate(updateOpts)
+		case "assc":
+			err = runAsscUpdate(updateOpts)
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown service type: %s\n", updateOpts.serviceType)
 			os.Exit(1)

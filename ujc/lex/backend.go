@@ -25,7 +25,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/agnivade/levenshtein"
 	"github.com/czcorpus/cnc-gokit/collections"
 )
 
@@ -56,7 +55,7 @@ const (
 
 	GenderMascAnim     = "M"
 	GenderMascInan     = "I"
-	GenderMascAnimInan = "MI"
+	GenderMascAnimInan = "B"
 	GenderFem          = "F"
 	GenderNeut         = "N"
 
@@ -65,11 +64,34 @@ const (
 	AspectBoth = "B"
 
 	POSOrder    = "NAPCVDRJTI"
-	GenderOrder = "MIFN"
+	GenderOrder = "MIBFN"
 	AspectOrder = "PIB"
 
 	TableName = "lex_dictionary"
 )
+
+func morphologySort(item1 LexItem, item2 LexItem) bool {
+	var orderMap, orderData1, orderData2 string
+	if item1.Pos == "N" && item2.Pos == "N" {
+		// order by gender if both items are nouns
+		orderMap, orderData1, orderData2 = GenderOrder, item1.Gender, item2.Gender
+	} else if item1.Pos == "V" && item2.Pos == "V" {
+		// order by aspect if both items are verbs
+		orderMap, orderData1, orderData2 = AspectOrder, item1.Aspect, item2.Aspect
+	} else {
+		// order by PoS for other items
+		orderMap, orderData1, orderData2 = POSOrder, item1.Pos, item2.Pos
+	}
+	orderIndex1 := strings.Index(orderMap, orderData1)
+	orderIndex2 := strings.Index(orderMap, orderData2)
+	if orderIndex1 == -1 {
+		orderIndex1 = len(orderMap)
+	}
+	if orderIndex2 == -1 {
+		orderIndex2 = len(orderMap)
+	}
+	return orderIndex1 < orderIndex2
+}
 
 var dictionaryTable = `
 CREATE TABLE %s (
@@ -81,6 +103,8 @@ CREATE TABLE %s (
 	pos VARCHAR(4) NOT NULL,
 	gender VARCHAR(2),
 	aspect VARCHAR(1),
+	uninflected TINYINT DEFAULT 0 NOT NULL,
+	plurality VARCHAR(32),
 	
 	source VARCHAR(8) NOT NULL,
 	external_id VARCHAR(100) NOT NULL,
@@ -201,34 +225,34 @@ func SearchAvailableSources(ctx context.Context, db *sql.DB, lemma string) ([]So
 	return sources, nil
 }
 
-func SearchVariants(ctx context.Context, db *sql.DB, lemma string, source Source) ([]LexItem, error) {
+func SearchVariants(ctx context.Context, db *sql.DB, lemma string, mainSource Source) ([]LexItem, error) {
 	row, err := db.QueryContext(
 		ctx,
 		`
 		-- aggregate external ids to JSON array for each lemma and its variants, grouped by source
-		SELECT lemma, pos, gender, aspect, JSON_OBJECTAGG(source, idents) AS sources
+		SELECT lemma, pos, gender, aspect, uninflected, JSON_OBJECTAGG(source, idents) AS sources
 		FROM (
 			-- get external source identifiers for the lemma and its variants
-			SELECT sub.lemma as lemma, sub.pos as pos, sub.gender as gender, sub.aspect as aspect, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id, 'groupOrder', group_order) ORDER BY homonym) AS idents
+			SELECT sub.lemma as lemma, sub.pos as pos, sub.gender as gender, sub.aspect as aspect, sub.uninflected as uninflected, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id, 'groupOrder', group_order, 'homonym', homonym) ORDER BY homonym) AS idents
 			FROM (
 				-- find available variants, get exact lemmata and their variants based on group_id and source
-				SELECT DISTINCT lemma, pos, gender, aspect
+				SELECT DISTINCT lemma, pos, gender, aspect, uninflected
 				FROM lex_dictionary AS l
 				JOIN (
 					SELECT DISTINCT group_id, source FROM lex_dictionary WHERE lemma = ? AND source = ? AND group_id IS NOT NULL
 				) AS g
 				ON g.group_id = l.group_id AND g.source = l.source
 				UNION
-				SELECT DISTINCT lemma, pos, gender, aspect
+				SELECT DISTINCT lemma, pos, gender, aspect, uninflected
 				FROM lex_dictionary AS l
 				WHERE lemma = ? AND source = ? AND group_id IS NULL
 			) AS sub
 			JOIN lex_dictionary AS l2
-			ON l2.lemma = sub.lemma AND l2.pos = sub.pos AND (l2.gender = sub.gender OR (l2.gender IS NULL AND sub.gender IS NULL)) AND (l2.aspect = sub.aspect OR (l2.aspect IS NULL AND sub.aspect IS NULL))
-			GROUP BY lemma, pos, gender, aspect, source
+			ON l2.lemma = sub.lemma AND l2.pos = sub.pos AND (l2.gender = sub.gender OR (l2.gender IS NULL AND sub.gender IS NULL)) AND (l2.aspect = sub.aspect OR (l2.aspect IS NULL AND sub.aspect IS NULL)) AND l2.uninflected = sub.uninflected
+			GROUP BY lemma, pos, gender, aspect, uninflected, source
 		) AS sub2
-		GROUP BY lemma, pos, gender, aspect`,
-		lemma, source, lemma, source,
+		GROUP BY lemma, pos, gender, aspect, uninflected`,
+		lemma, mainSource, lemma, mainSource,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search the term: %w", err)
@@ -238,16 +262,21 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string, source Source
 	data := make([]LexItem, 0)
 	for row.Next() {
 		var genderArg, aspectArg sql.NullString
+		var uninflectedArg int64
 		var jsonSources string
 		item := LexItem{}
-		if err := row.Scan(&item.Lemma, &item.Pos, &genderArg, &aspectArg, &jsonSources); err != nil {
+		if err := row.Scan(&item.Lemma, &item.Pos, &genderArg, &aspectArg, &uninflectedArg, &jsonSources); err != nil {
 			if err == sql.ErrNoRows {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("failed to scan the term: %w", err)
 		}
+		item.Uninflected = uninflectedArg != 0
 		if genderArg.Valid {
 			item.Gender = genderArg.String
+			if item.Gender == GenderMascAnimInan {
+				item.Gender = "MI"
+			}
 		}
 		if aspectArg.Valid {
 			item.Aspect = aspectArg.String
@@ -256,35 +285,64 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string, source Source
 		if err := json.Unmarshal([]byte(jsonSources), &item.Sources); err != nil {
 			return nil, fmt.Errorf("failed to search the term: %w", err)
 		}
-		item.relevanceScore = levenshtein.ComputeDistance(lemma, item.Lemma)
 		data = append(data, item)
 	}
-	sort.Slice(data, func(i, j int) bool {
-		if data[i].relevanceScore == data[j].relevanceScore {
-			var orderMap, orderDataI, orderDataJ string
-			if data[i].Pos == "N" && data[j].Pos == "N" {
-				// order by gender if both items are nouns
-				orderMap, orderDataI, orderDataJ = GenderOrder, data[i].Gender, data[j].Gender
-			} else if data[i].Pos == "V" && data[j].Pos == "V" {
-				// order by aspect if both items are verbs
-				orderMap, orderDataI, orderDataJ = AspectOrder, data[i].Aspect, data[j].Aspect
-			} else {
-				// order by PoS for other items
-				orderMap, orderDataI, orderDataJ = POSOrder, data[i].Pos, data[j].Pos
-			}
-			orderIndexI := strings.Index(orderMap, orderDataI)
-			orderIndexJ := strings.Index(orderMap, orderDataJ)
-			if orderIndexI == -1 {
-				orderIndexI = len(orderMap)
-			}
-			if orderIndexJ == -1 {
-				orderIndexJ = len(orderMap)
-			}
 
-			return orderIndexI < orderIndexJ
+	// Get first items of groups
+	firstGroupItems := collections.SliceReduce(data, func(acc []LexItem, curr LexItem, i int) []LexItem {
+		groupIdx := collections.SliceFindIndex(acc, func(v LexItem) bool {
+			return v.Sources[mainSource][0].ID == curr.Sources[mainSource][0].ID
+		})
+		if groupIdx == -1 {
+			return append(acc, curr)
 		}
-		return data[i].relevanceScore < data[j].relevanceScore
+		if acc[groupIdx].Sources[mainSource][0].GroupOrder > curr.Sources[mainSource][0].GroupOrder {
+			acc[groupIdx] = curr
+		}
+		return acc
+	}, make([]LexItem, 0, 5))
+
+	// Sort first items of groups
+	sort.Slice(firstGroupItems, func(i, j int) bool {
+		// first order by Lemma
+		if firstGroupItems[i].Lemma != firstGroupItems[j].Lemma {
+			return firstGroupItems[i].Lemma < firstGroupItems[j].Lemma
+		}
+		// then by homonymy
+		if firstGroupItems[i].Sources[mainSource][0].Homonym != firstGroupItems[j].Sources[mainSource][0].Homonym {
+			return firstGroupItems[i].Sources[mainSource][0].Homonym < firstGroupItems[j].Sources[mainSource][0].Homonym
+		}
+		return morphologySort(firstGroupItems[i], firstGroupItems[j])
+	})
+
+	// groupID order map
+	groupOrder := make(map[string]int)
+	for i, v := range firstGroupItems {
+		groupOrder[v.Sources[mainSource][0].ID] = i
+	}
+
+	// sort groups all data
+	sort.Slice(data, func(i, j int) bool {
+		if data[i].Sources[mainSource][0].ID != data[j].Sources[mainSource][0].ID {
+			return groupOrder[data[i].Sources[mainSource][0].ID] < groupOrder[data[j].Sources[mainSource][0].ID]
+		}
+		if data[i].Sources[mainSource][0].GroupOrder != data[j].Sources[mainSource][0].GroupOrder {
+			return data[i].Sources[mainSource][0].GroupOrder < data[j].Sources[mainSource][0].GroupOrder
+		}
+		return morphologySort(data[i], data[j])
 	})
 
 	return data, nil
+}
+
+func PruneData(ctx context.Context, tx *sql.Tx, source Source) error {
+	_, err := tx.ExecContext(
+		ctx,
+		"DELETE FROM lex_dictionary WHERE source = ?",
+		source,
+	)
+	if err != nil {
+		return err
+	}
+	return nil
 }

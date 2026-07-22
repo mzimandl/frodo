@@ -20,13 +20,15 @@ type LexID struct {
 	ParentID   string `json:"parentId"`
 	ID         string `json:"id"`
 	GroupOrder int    `json:"groupOrder"`
+	Homonym    int    `json:"homonym"`
 }
 
 type LexItem struct {
-	Lemma          string             `json:"lemma"`
-	Pos            string             `json:"pos"`
-	Gender         string             `json:"gender"`
-	Aspect         string             `json:"aspect"`
-	Sources        map[Source][]LexID `json:"sources"`
-	relevanceScore int
+	Lemma       string             `json:"lemma"`
+	Pos         string             `json:"pos"`
+	Gender      string             `json:"gender"`
+	Aspect      string             `json:"aspect"`
+	Uninflected bool               `json:"uninflected"`
+	Plurality   string             `json:"pluarlity"`
+	Sources     map[Source][]LexID `json:"sources"`
 }
