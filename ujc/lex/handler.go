@@ -29,6 +29,7 @@ import (
 	"github.com/agnivade/levenshtein"
 	"github.com/czcorpus/cnc-gokit/collections"
 	"github.com/czcorpus/cnc-gokit/uniresp"
+	"github.com/czcorpus/cnc-gokit/util"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 )
@@ -209,18 +210,20 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 			return
 		}
+		// corpus entry needs to replace "B" gender with "MI"
+		lexSpecifier := cmp.Or(util.Ternary(item.Gender == GenderMascAnimInan, "MI", item.Gender), item.Aspect)
 		if corpusEntry == nil {
 			corpusEntry = &dictionary.Lemma{
 				ID:        fmt.Sprintf("lex-%d", i),
 				Lemma:     item.Lemma,
 				PoS:       item.Pos,
-				Specifier: cmp.Or(item.Gender, item.Aspect),
+				Specifier: lexSpecifier,
 				Forms:     []dictionary.Form{{Value: item.Lemma, Sublemma: item.Lemma}},
 				Sublemmas: []dictionary.Sublemma{{Value: item.Lemma}},
 			}
 		} else {
 			corpusEntry.ID = fmt.Sprintf("corp-%d", i)
-			corpusEntry.Specifier = cmp.Or(corpusEntry.Specifier, cmp.Or(item.Gender, item.Aspect))
+			corpusEntry.Specifier = cmp.Or(corpusEntry.Specifier, lexSpecifier)
 			corpusEntry.Sublemmas = collections.SliceFilter(corpusEntry.Sublemmas, func(sublemma dictionary.Sublemma, i int) bool {
 				return sublemma.Value == item.Lemma
 			})
