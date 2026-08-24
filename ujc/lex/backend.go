@@ -24,6 +24,8 @@ import (
 	"strings"
 
 	"github.com/czcorpus/cnc-gokit/collections"
+	"github.com/czcorpus/cnc-gokit/util"
+	"github.com/rs/zerolog/log"
 )
 
 type Source string
@@ -174,43 +176,24 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string, mainSource So
 	row, err := db.QueryContext(
 		ctx,
 		`
-		-- aggregate external ids to JSON array for each lemma and its variants, grouped by source
-		SELECT lemma, pos, gender, aspect, uninflected, plurality, JSON_OBJECTAGG(source, idents) AS sources
-		FROM (
-			-- get external source identifiers for the lemma and its variants
-			SELECT sub.lemma as lemma, sub.pos as pos, sub.gender as gender, sub.aspect as aspect, sub.uninflected as uninflected, sub.plurality as plurality, source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id, 'groupOrder', group_order, 'homonym', homonym) ORDER BY homonym) AS idents
-			FROM (
-				-- find available variants, get exact lemmata and their variants based on group_id and source
-				SELECT DISTINCT lemma, pos, gender, aspect, uninflected, plurality
-				FROM lex_dictionary AS l
-				JOIN (
-					SELECT DISTINCT group_id, source
-					FROM lex_dictionary
-					WHERE lemma = ? AND source = ? AND group_id IS NOT NULL
-				) AS g
-				ON g.group_id = l.group_id AND g.source = l.source
-				UNION
-				SELECT DISTINCT lemma, pos, gender, aspect, uninflected, plurality
-				FROM lex_dictionary AS l
-				WHERE lemma = ? AND source = ? AND group_id IS NULL
-			) AS sub
-			JOIN lex_dictionary AS l2
-			ON l2.lemma = sub.lemma AND (
-				l2.pos = 'X' OR
-				sub.pos = 'X' OR (
-					l2.pos = sub.pos AND
-					(l2.gender = sub.gender OR (l2.gender IS NULL AND sub.gender IS NULL)) AND
-					(l2.aspect = sub.aspect OR (l2.aspect IS NULL AND sub.aspect IS NULL)) AND
-					l2.uninflected = sub.uninflected AND l2.plurality = sub.plurality
-				)
-			)
-			GROUP BY lemma, pos, gender, aspect, uninflected, plurality, source
-		) AS sub2
-		GROUP BY lemma, pos, gender, aspect, uninflected, plurality`,
+			-- find available variants, get exact lemmata and their variants based on group_id and source
+			SELECT DISTINCT lemma, pos, gender, aspect, uninflected, plurality
+			FROM lex_dictionary AS l
+			JOIN (
+				SELECT DISTINCT group_id, source
+				FROM lex_dictionary
+				WHERE lemma = ? AND source = ? AND group_id IS NOT NULL
+			) AS g
+			ON g.group_id = l.group_id AND g.source = l.source
+			UNION
+			SELECT DISTINCT lemma, pos, gender, aspect, uninflected, plurality
+			FROM lex_dictionary AS l
+			WHERE lemma = ? AND source = ? AND group_id IS NULL
+		`,
 		lemma, mainSource, lemma, mainSource,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to search the term: %w", err)
+		return nil, fmt.Errorf("failed to search variants: %w", err)
 	}
 	defer row.Close()
 
@@ -218,13 +201,12 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string, mainSource So
 	for row.Next() {
 		var genderArg, aspectArg sql.NullString
 		var uninflectedArg int64
-		var jsonSources string
 		item := LexItem{}
-		if err := row.Scan(&item.Lemma, &item.Pos, &genderArg, &aspectArg, &uninflectedArg, &item.Plurality, &jsonSources); err != nil {
+		if err := row.Scan(&item.Lemma, &item.Pos, &genderArg, &aspectArg, &uninflectedArg, &item.Plurality); err != nil {
 			if err == sql.ErrNoRows {
 				return nil, nil
 			}
-			return nil, fmt.Errorf("failed to scan the term: %w", err)
+			return nil, fmt.Errorf("failed to scan variants: %w", err)
 		}
 		item.Uninflected = uninflectedArg != 0
 		if genderArg.Valid {
@@ -233,14 +215,69 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string, mainSource So
 		if aspectArg.Valid {
 			item.Aspect = aspectArg.String
 		}
-		// parse jsonIdents into srchItem.Idents
-		if err := json.Unmarshal([]byte(jsonSources), &item.Sources); err != nil {
-			return nil, fmt.Errorf("failed to search the term: %w", err)
-		}
 		data = append(data, item)
 	}
 
 	return data, nil
+}
+
+func SearchSources(ctx context.Context, db *sql.DB, lexItem LexItem) (map[Source][]LexID, error) {
+	// if lexItem.Pos is 'X', do not filter by pos (accept any pos)
+	whereParts := []string{"lemma = ?"}
+	args := []any{lexItem.Lemma}
+	if lexItem.Pos != POSUnkn {
+		whereParts = append(whereParts, "(pos = ? OR pos = 'X')")
+		args = append(args, lexItem.Pos)
+	}
+	if lexItem.Gender != "" {
+		whereParts = append(whereParts, "gender = ?")
+		args = append(args, lexItem.Gender)
+	} else {
+		whereParts = append(whereParts, "gender is NULL")
+	}
+	if lexItem.Aspect != "" {
+		whereParts = append(whereParts, "aspect = ?")
+		args = append(args, lexItem.Aspect)
+	} else {
+		whereParts = append(whereParts, "aspect is NULL")
+	}
+	whereParts = append(whereParts,
+		"uninflected = ?",
+		"plurality = ?",
+	)
+	args = append(args, util.Ternary(lexItem.Uninflected, 1, 0), lexItem.Plurality)
+
+	query := `
+		SELECT source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id, 'groupOrder', group_order, 'homonym', homonym) ORDER BY homonym) AS idents
+		FROM lex_dictionary
+		WHERE ` + strings.Join(whereParts, " AND ") + `
+		GROUP BY source
+		`
+
+	log.Debug().Any("query", query).Any("args", args).Send()
+	row, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search sources: %w", err)
+	}
+	defer row.Close()
+
+	sources := make(map[Source][]LexID)
+	for row.Next() {
+		var source Source
+		var jsonIdents string
+		if err := row.Scan(&source, &jsonIdents); err != nil {
+			if err == sql.ErrNoRows {
+				return sources, nil
+			}
+			return nil, fmt.Errorf("failed to scan sources: %w", err)
+		}
+		var idents []LexID
+		if err := json.Unmarshal([]byte(jsonIdents), &idents); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal sources: %w", err)
+		}
+		sources[source] = idents
+	}
+	return sources, nil
 }
 
 func PruneData(ctx context.Context, tx *sql.Tx, source Source) error {

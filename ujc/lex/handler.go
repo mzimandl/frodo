@@ -103,11 +103,13 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 		return
 	}
 
-	// search variants for first candidate, the rest will be used as suggestions
+	// first candidate will be used for search, the rest will be used as suggestions
 	usedCandidate := searchCandidates[0]
 	suggestions := append(collections.SliceMap(searchCandidates[1:], func(item SearchCandidate, i int) string {
 		return item.Value
 	}), typoSuggestions...)
+
+	// get variants from one source
 	lexItems, err := SearchVariants(ctx, actions.db.DB(), usedCandidate.Value, usedCandidate.Source)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
@@ -123,6 +125,17 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 		}
 		uniresp.WriteJSONResponse(ctx.Writer, ans)
 		return
+	}
+
+	// for each variant, join source data
+	for i, item := range lexItems {
+		sources, err := SearchSources(ctx, actions.db.DB(), item)
+		if err != nil {
+			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
+			return
+		}
+		log.Debug().Any("sources", sources).Send()
+		lexItems[i].Sources = sources
 	}
 
 	// apply special transformations
