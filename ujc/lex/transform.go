@@ -39,13 +39,16 @@ func ApplyTransformations(ctx context.Context, db *sql.DB, mainSource Source, da
 	return data, nil
 }
 
+func Identity(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
+	return data, nil
+}
+
 func JoinToIBGenderFromSSC(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
 	// if data gender == I || B and no SSC source
 	// add to data SSC source with gender M
 	// (SSC source does not distinct masculine genders)
 	for i, item := range data {
-		_, ok := item.Sources[SourceSSC]
-		if (item.Gender == GenderMascInan || item.Gender == GenderMascAnimInan) && !ok {
+		if !item.HasSource(SourceSSC) && (item.Gender == GenderMascInan || item.Gender == GenderMascAnimInan) {
 			search := LexItem{
 				Lemma:       item.Lemma,
 				Pos:         item.Pos,
@@ -64,4 +67,14 @@ func JoinToIBGenderFromSSC(ctx context.Context, db *sql.DB, mainSource Source, d
 		}
 	}
 	return data, nil
+}
+
+func TransformToDTIJC(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
+	return data, nil
+}
+
+func CreatePriorityTransform(sourcePriority []Source) LexTransform {
+	return func(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
+		return Identity(ctx, db, mainSource, data)
+	}
 }

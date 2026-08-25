@@ -38,22 +38,22 @@ const (
 	SourceSJC  Source = "sjc"
 	SourceSSC  Source = "ssc"
 
-	POSAdj   = "A"
-	POSAbb   = "B"
+	PosAdj   = "A"
+	PosAbb   = "B"
 	PosNum   = "C"
-	POSAdv   = "D"
-	POSFore  = "F"
-	POSInter = "I"
-	POSConj  = "J"
-	POSNoun  = "N"
-	POSPron  = "P"
-	POSPrep  = "R"
-	POSSegm  = "S"
-	POSPart  = "T"
-	POSVerb  = "V"
-	POSUnkn  = "X"
-	POSPunc  = "Z"
-	POSDTIJ  = "DTIJ"
+	PosAdv   = "D"
+	PosFore  = "F"
+	PosInter = "I"
+	PosConj  = "J"
+	PosNoun  = "N"
+	PosPron  = "P"
+	PosPrep  = "R"
+	PosSegm  = "S"
+	PosPart  = "T"
+	PosVerb  = "V"
+	PosUnkn  = "X"
+	PosPunc  = "Z"
+	PosDTIJ  = "DTIJ"
 
 	GenderMascAnim     = "M"
 	GenderMascInan     = "I"
@@ -226,7 +226,7 @@ func SearchSources(ctx context.Context, db *sql.DB, lexItem LexItem) (map[Source
 	// if lexItem.Pos is 'X', do not filter by pos (accept any pos)
 	whereParts := []string{"lemma = ?"}
 	args := []any{lexItem.Lemma}
-	if lexItem.Pos != POSUnkn {
+	if lexItem.Pos != PosUnkn {
 		whereParts = append(whereParts, "(pos = ? OR pos = 'X')")
 		args = append(args, lexItem.Pos)
 	}

@@ -24,11 +24,26 @@ type LexID struct {
 }
 
 type LexItem struct {
-	Lemma       string             `json:"lemma"`
-	Pos         string             `json:"pos"`
-	Gender      string             `json:"gender"`
-	Aspect      string             `json:"aspect"`
-	Uninflected bool               `json:"uninflected"`
-	Plurality   int                `json:"plurality"`
-	Sources     map[Source][]LexID `json:"sources"`
+	Lemma       string `json:"lemma"`
+	Pos         string `json:"pos"`
+	Gender      string `json:"gender"`
+	Aspect      string `json:"aspect"`
+	Uninflected bool   `json:"uninflected"`
+	Plurality   int    `json:"plurality"`
+
+	Sources map[Source][]LexID `json:"sources"`
+}
+
+func (li *LexItem) Equals(item LexItem) bool {
+	return (li.Lemma == item.Lemma &&
+		li.Pos == item.Pos &&
+		li.Gender == item.Gender &&
+		li.Aspect == item.Aspect &&
+		li.Uninflected == item.Uninflected &&
+		li.Plurality == item.Plurality)
+}
+
+func (li *LexItem) HasSource(source Source) bool {
+	_, ok := li.Sources[source]
+	return ok
 }
