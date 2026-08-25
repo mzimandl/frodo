@@ -39,33 +39,6 @@ func ApplyTransformations(ctx context.Context, db *sql.DB, mainSource Source, da
 	return data, nil
 }
 
-func JoinToPluarlityFromIJP(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
-	// if data plurality != 0 and no IJP source
-	// add to data IJP source with plurality 0
-	// (IJP source does not distinct plurality)
-	for i, item := range data {
-		_, ok := item.Sources[SourceIJP]
-		if item.Plurality != 0 && !ok {
-			search := LexItem{
-				Lemma:       item.Lemma,
-				Pos:         item.Pos,
-				Gender:      item.Gender,
-				Aspect:      item.Aspect,
-				Uninflected: false, // TODO
-				Plurality:   0,
-			}
-			ids, err := SearchLexItemID(ctx, db, search, SourceIJP)
-			if err != nil {
-				return nil, fmt.Errorf("failed to join inflected IJP data: %w", err)
-			}
-			if len(ids) != 0 {
-				data[i].Sources[SourceIJP] = ids
-			}
-		}
-	}
-	return data, nil
-}
-
 func JoinToIBGenderFromSSC(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
 	// if data gender == I || B and no SSC source
 	// add to data SSC source with gender M

@@ -73,6 +73,7 @@ const (
 	PluralityAlways  = 2
 	PluralityUsually = 3
 	PluralityOnly    = 4
+	PluralityUnknown = 5
 
 	TableName = "lex_dictionary"
 )
@@ -241,11 +242,12 @@ func SearchSources(ctx context.Context, db *sql.DB, lexItem LexItem) (map[Source
 	} else {
 		whereParts = append(whereParts, "aspect is NULL")
 	}
-	whereParts = append(whereParts,
-		"uninflected = ?",
-		"plurality = ?",
-	)
-	args = append(args, util.Ternary(lexItem.Uninflected, 1, 0), lexItem.Plurality)
+	if lexItem.Plurality != PluralityUnknown {
+		whereParts = append(whereParts, "(plurality = ? OR plurality = ?)")
+		args = append(args, lexItem.Plurality, PluralityUnknown)
+	}
+	whereParts = append(whereParts, "uninflected = ?")
+	args = append(args, util.Ternary(lexItem.Uninflected, 1, 0))
 
 	query := `
 		SELECT source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id, 'groupOrder', group_order, 'homonym', homonym) ORDER BY homonym) AS idents
@@ -323,8 +325,10 @@ func SearchLexItemID(ctx context.Context, db *sql.DB, lexItem LexItem, source So
 	where = append(where, "uninflected = ?")
 	args = append(args, uninflectedInt)
 
-	where = append(where, "plurality = ?")
-	args = append(args, lexItem.Plurality)
+	if lexItem.Plurality != PluralityUnknown {
+		where = append(where, "(plurality = ? OR plurality = ?)")
+		args = append(args, lexItem.Plurality, PluralityUnknown)
+	}
 
 	where = append(where, "source = ?")
 	args = append(args, source)
