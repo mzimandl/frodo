@@ -20,6 +20,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/czcorpus/cnc-gokit/collections"
 )
 
 type LexTransform func(context.Context, *sql.DB, Source, []LexItem) ([]LexItem, error)
@@ -48,13 +50,13 @@ func JoinToIBGenderFromSSC(ctx context.Context, db *sql.DB, mainSource Source, d
 	// add to data SSC source with gender M
 	// (SSC source does not distinct masculine genders)
 	for i, item := range data {
-		if !item.HasSource(SourceSSC) && (item.Gender == GenderMascInan || item.Gender == GenderMascAnimInan) {
-			search := LexItem{
-				Lemma:       item.Lemma,
-				Pos:         item.Pos,
+		if !item.HasSource(SourceSSC) && (item.Key.Gender == GenderMascInan || item.Key.Gender == GenderMascAnimInan) {
+			search := LexKey{
+				Lemma:       item.Key.Lemma,
+				Pos:         item.Key.Pos,
 				Gender:      GenderMascAnim,
-				Aspect:      item.Aspect,
-				Uninflected: item.Uninflected,
+				Aspect:      item.Key.Aspect,
+				Uninflected: item.Key.Uninflected,
 				Plurality:   0,
 			}
 			ids, err := SearchLexItemID(ctx, db, search, SourceSSC)
@@ -69,12 +71,17 @@ func JoinToIBGenderFromSSC(ctx context.Context, db *sql.DB, mainSource Source, d
 	return data, nil
 }
 
-func TransformToDTIJC(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
-	return data, nil
-}
-
-func CreatePriorityTransform(sourcePriority []Source) LexTransform {
-	return func(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
-		return Identity(ctx, db, mainSource, data)
+func TransformToDTIJ(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
+	var result []LexItem
+	for _, item := range data {
+		if item.Key.Pos == PosAdv || item.Key.Pos == PosPart || item.Key.Pos == PosInter || item.Key.Pos == PosConj {
+			item.Key.Pos = PosDTIJ
+			item.PosSource = ""
+		}
+		if collections.SliceFindIndex(result, func(v LexItem) bool { return item.Key == v.Key }) == -1 {
+			result = append(result, item)
+		}
 	}
+
+	return result, nil
 }

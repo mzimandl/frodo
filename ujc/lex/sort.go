@@ -29,7 +29,7 @@ const (
 	AspectOrder = "PIB"
 )
 
-func morphologySort(item1 LexItem, item2 LexItem) bool {
+func morphologySort(item1 LexKey, item2 LexKey) bool {
 	var orderMap, orderData1, orderData2 string
 	if item1.Pos == "N" && item2.Pos == "N" {
 		// order by gender if both items are nouns
@@ -70,14 +70,14 @@ func sortVariants(data []LexItem, mainSource Source) []LexItem {
 	// Sort first items of groups
 	sort.Slice(firstGroupItems, func(i, j int) bool {
 		// first order by Lemma
-		if firstGroupItems[i].Lemma != firstGroupItems[j].Lemma {
-			return firstGroupItems[i].Lemma < firstGroupItems[j].Lemma
+		if firstGroupItems[i].Key.Lemma != firstGroupItems[j].Key.Lemma {
+			return firstGroupItems[i].Key.Lemma < firstGroupItems[j].Key.Lemma
 		}
 		// then by homonymy
 		if firstGroupItems[i].Sources[mainSource][0].Homonym != firstGroupItems[j].Sources[mainSource][0].Homonym {
 			return firstGroupItems[i].Sources[mainSource][0].Homonym < firstGroupItems[j].Sources[mainSource][0].Homonym
 		}
-		return morphologySort(firstGroupItems[i], firstGroupItems[j])
+		return morphologySort(firstGroupItems[i].Key, firstGroupItems[j].Key)
 	})
 
 	// groupID order map
@@ -94,7 +94,7 @@ func sortVariants(data []LexItem, mainSource Source) []LexItem {
 		if data[i].Sources[mainSource][0].GroupOrder != data[j].Sources[mainSource][0].GroupOrder {
 			return data[i].Sources[mainSource][0].GroupOrder < data[j].Sources[mainSource][0].GroupOrder
 		}
-		return morphologySort(data[i], data[j])
+		return morphologySort(data[i].Key, data[j].Key)
 	})
 
 	return data

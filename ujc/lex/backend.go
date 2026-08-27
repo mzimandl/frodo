@@ -25,7 +25,6 @@ import (
 
 	"github.com/czcorpus/cnc-gokit/collections"
 	"github.com/czcorpus/cnc-gokit/util"
-	"github.com/rs/zerolog/log"
 )
 
 type Source string
@@ -202,61 +201,65 @@ func SearchVariants(ctx context.Context, db *sql.DB, lemma string, mainSource So
 	for row.Next() {
 		var genderArg, aspectArg sql.NullString
 		var uninflectedArg int64
-		item := LexItem{}
-		if err := row.Scan(&item.Lemma, &item.Pos, &genderArg, &aspectArg, &uninflectedArg, &item.Plurality); err != nil {
+		key := LexKey{}
+		if err := row.Scan(&key.Lemma, &key.Pos, &genderArg, &aspectArg, &uninflectedArg, &key.Plurality); err != nil {
 			if err == sql.ErrNoRows {
 				return nil, nil
 			}
 			return nil, fmt.Errorf("failed to scan variants: %w", err)
 		}
-		item.Uninflected = uninflectedArg != 0
+		key.Uninflected = uninflectedArg != 0
 		if genderArg.Valid {
-			item.Gender = genderArg.String
+			key.Gender = genderArg.String
 		}
 		if aspectArg.Valid {
-			item.Aspect = aspectArg.String
+			key.Aspect = aspectArg.String
 		}
-		data = append(data, item)
+		data = append(data, LexItem{Key: key, PosSource: mainSource})
 	}
 
 	return data, nil
 }
 
-func SearchSources(ctx context.Context, db *sql.DB, lexItem LexItem) (map[Source][]LexID, error) {
+func SearchSources(ctx context.Context, db *sql.DB, lexKey LexKey) (map[Source][]LexID, error) {
 	// if lexItem.Pos is 'X', do not filter by pos (accept any pos)
 	whereParts := []string{"lemma = ?"}
-	args := []any{lexItem.Lemma}
-	if lexItem.Pos != PosUnkn {
-		whereParts = append(whereParts, "(pos = ? OR pos = 'X')")
-		args = append(args, lexItem.Pos)
+	args := []any{lexKey.Lemma}
+	if lexKey.Pos != PosUnkn {
+		if lexKey.Pos == PosDTIJ {
+			whereParts = append(whereParts, "pos IN (?, ?, ?, ?, ?, ?)")
+			args = append(args, PosDTIJ, PosAdv, PosPart, PosInter, PosConj, PosUnkn)
+		} else {
+			whereParts = append(whereParts, "pos IN (?, ?)")
+			args = append(args, lexKey.Pos, PosUnkn)
+		}
 	}
-	if lexItem.Gender != "" {
+	if lexKey.Gender != "" {
 		whereParts = append(whereParts, "gender = ?")
-		args = append(args, lexItem.Gender)
+		args = append(args, lexKey.Gender)
 	} else {
 		whereParts = append(whereParts, "gender is NULL")
 	}
-	if lexItem.Aspect != "" {
+	if lexKey.Aspect != "" {
 		whereParts = append(whereParts, "aspect = ?")
-		args = append(args, lexItem.Aspect)
+		args = append(args, lexKey.Aspect)
 	} else {
 		whereParts = append(whereParts, "aspect is NULL")
 	}
-	if lexItem.Plurality != PluralityUnknown {
+	if lexKey.Plurality != PluralityUnknown {
 		whereParts = append(whereParts, "(plurality = ? OR plurality = ?)")
-		args = append(args, lexItem.Plurality, PluralityUnknown)
+		args = append(args, lexKey.Plurality, PluralityUnknown)
 	}
 	whereParts = append(whereParts, "uninflected = ?")
-	args = append(args, util.Ternary(lexItem.Uninflected, 1, 0))
+	args = append(args, util.Ternary(lexKey.Uninflected, 1, 0))
 
 	query := `
-		SELECT source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id, 'groupOrder', group_order, 'homonym', homonym) ORDER BY homonym) AS idents
+		SELECT source, JSON_ARRAYAGG(JSON_OBJECT('id', external_id, 'parentId', external_parent_id, 'groupOrder', group_order, 'homonym', homonym, 'pos', pos) ORDER BY homonym) AS idents
 		FROM lex_dictionary
 		WHERE ` + strings.Join(whereParts, " AND ") + `
 		GROUP BY source
 		`
 
-	log.Debug().Any("query", query).Any("args", args).Send()
 	row, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search sources: %w", err)
@@ -294,46 +297,46 @@ func PruneData(ctx context.Context, tx *sql.Tx, source Source) error {
 	return nil
 }
 
-func SearchLexItemID(ctx context.Context, db *sql.DB, lexItem LexItem, source Source) ([]LexID, error) {
+func SearchLexItemID(ctx context.Context, db *sql.DB, lexKey LexKey, source Source) ([]LexID, error) {
 	// Build WHERE clause dynamically so empty Gender/Aspect are searched as NULL
 	where := make([]string, 0, 8)
 	args := make([]interface{}, 0, 8)
 	where = append(where, "lemma = ?")
-	args = append(args, lexItem.Lemma)
+	args = append(args, lexKey.Lemma)
 	where = append(where, "pos = ?")
-	args = append(args, lexItem.Pos)
+	args = append(args, lexKey.Pos)
 
-	if lexItem.Gender == "" {
+	if lexKey.Gender == "" {
 		where = append(where, "gender IS NULL")
 	} else {
 		where = append(where, "gender = ?")
-		args = append(args, lexItem.Gender)
+		args = append(args, lexKey.Gender)
 	}
 
-	if lexItem.Aspect == "" {
+	if lexKey.Aspect == "" {
 		where = append(where, "aspect IS NULL")
 	} else {
 		where = append(where, "aspect = ?")
-		args = append(args, lexItem.Aspect)
+		args = append(args, lexKey.Aspect)
 	}
 
 	// uninflected stored as tinyint; convert bool to int
 	uninflectedInt := 0
-	if lexItem.Uninflected {
+	if lexKey.Uninflected {
 		uninflectedInt = 1
 	}
 	where = append(where, "uninflected = ?")
 	args = append(args, uninflectedInt)
 
-	if lexItem.Plurality != PluralityUnknown {
+	if lexKey.Plurality != PluralityUnknown {
 		where = append(where, "(plurality = ? OR plurality = ?)")
-		args = append(args, lexItem.Plurality, PluralityUnknown)
+		args = append(args, lexKey.Plurality, PluralityUnknown)
 	}
 
 	where = append(where, "source = ?")
 	args = append(args, source)
 
-	query := "SELECT external_id, external_parent_id, group_order, homonym FROM lex_dictionary WHERE " + strings.Join(where, " AND ")
+	query := "SELECT external_id, external_parent_id, group_order, homonym, pos FROM lex_dictionary WHERE " + strings.Join(where, " AND ")
 
 	row, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -345,7 +348,7 @@ func SearchLexItemID(ctx context.Context, db *sql.DB, lexItem LexItem, source So
 	for row.Next() {
 		var lexId LexID
 		var externalParentID sql.NullString
-		if err := row.Scan(&lexId.ID, &externalParentID, &lexId.GroupOrder, &lexId.Homonym); err != nil {
+		if err := row.Scan(&lexId.ID, &externalParentID, &lexId.GroupOrder, &lexId.Homonym, &lexId.Pos); err != nil {
 			if err == sql.ErrNoRows {
 				return lexIds, nil
 			}

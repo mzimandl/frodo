@@ -127,9 +127,16 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 		return
 	}
 
+	// apply special transformations before getting source data
+	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), usedCandidate.Source, lexItems, TransformToDTIJ)
+	if err != nil {
+		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
+		return
+	}
+
 	// for each variant, join source data
 	for i, item := range lexItems {
-		sources, err := SearchSources(ctx, actions.db.DB(), item)
+		sources, err := SearchSources(ctx, actions.db.DB(), item.Key)
 		if err != nil {
 			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 			return
@@ -138,42 +145,43 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 		lexItems[i].Sources = sources
 	}
 
-	// apply special transformations
+	// apply special transformations after getting source data
 	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), usedCandidate.Source, lexItems, JoinToIBGenderFromSSC)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
 	}
+
 	lexItems = sortVariants(lexItems, usedCandidate.Source)
 
 	// search corpus entry for each variant
 	// if not found, create a new entry with minimal data
 	variants := make([]dictionary.Lemma, 0, len(lexItems))
 	for i, item := range lexItems {
-		corpusEntry, err := actions.searchCorpusEntry(ctx, corpusId, item.Lemma, item.Pos)
+		corpusEntry, err := actions.searchCorpusEntry(ctx, corpusId, item.Key.Lemma, item.Key.Pos)
 		if err != nil {
 			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 			return
 		}
 		// corpus entry needs to replace "B" gender with "MI"
-		lexSpecifier := cmp.Or(util.Ternary(item.Gender == GenderMascAnimInan, "MI", item.Gender), item.Aspect)
+		lexSpecifier := cmp.Or(util.Ternary(item.Key.Gender == GenderMascAnimInan, "MI", item.Key.Gender), item.Key.Aspect)
 		if corpusEntry == nil {
 			corpusEntry = &dictionary.Lemma{
 				ID:        fmt.Sprintf("lex-%d", i),
-				Lemma:     item.Lemma,
-				PoS:       item.Pos,
+				Lemma:     item.Key.Lemma,
+				PoS:       item.Key.Pos,
 				Specifier: lexSpecifier,
-				Forms:     []dictionary.Form{{Value: item.Lemma, Sublemma: item.Lemma}},
-				Sublemmas: []dictionary.Sublemma{{Value: item.Lemma}},
+				Forms:     []dictionary.Form{{Value: item.Key.Lemma, Sublemma: item.Key.Lemma}},
+				Sublemmas: []dictionary.Sublemma{{Value: item.Key.Lemma}},
 			}
 		} else {
 			corpusEntry.ID = fmt.Sprintf("corp-%d", i)
 			corpusEntry.Specifier = cmp.Or(corpusEntry.Specifier, lexSpecifier)
 			corpusEntry.Sublemmas = collections.SliceFilter(corpusEntry.Sublemmas, func(sublemma dictionary.Sublemma, i int) bool {
-				return sublemma.Value == item.Lemma
+				return sublemma.Value == item.Key.Lemma
 			})
 			corpusEntry.Forms = collections.SliceFilter(corpusEntry.Forms, func(form dictionary.Form, i int) bool {
-				return form.Sublemma == item.Lemma
+				return form.Sublemma == item.Key.Lemma
 			})
 		}
 		corpusEntry.ExtraData = LexExtraData{
