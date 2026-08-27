@@ -52,16 +52,16 @@ func morphologySort(item1 LexKey, item2 LexKey) bool {
 	return orderIndex1 < orderIndex2
 }
 
-func sortVariants(data []LexItem, mainSource Source) []LexItem {
+func sortVariants(data []LexItem, sortBySource Source) []LexItem {
 	// Get first items of groups
 	firstGroupItems := collections.SliceReduce(data, func(acc []LexItem, curr LexItem, i int) []LexItem {
 		groupIdx := collections.SliceFindIndex(acc, func(v LexItem) bool {
-			return v.Sources[mainSource][0].ID == curr.Sources[mainSource][0].ID
+			return v.Sources[sortBySource][0].ID == curr.Sources[sortBySource][0].ID
 		})
 		if groupIdx == -1 {
 			return append(acc, curr)
 		}
-		if acc[groupIdx].Sources[mainSource][0].GroupOrder > curr.Sources[mainSource][0].GroupOrder {
+		if acc[groupIdx].Sources[sortBySource][0].GroupOrder > curr.Sources[sortBySource][0].GroupOrder {
 			acc[groupIdx] = curr
 		}
 		return acc
@@ -74,8 +74,8 @@ func sortVariants(data []LexItem, mainSource Source) []LexItem {
 			return firstGroupItems[i].Key.Lemma < firstGroupItems[j].Key.Lemma
 		}
 		// then by homonymy
-		if firstGroupItems[i].Sources[mainSource][0].Homonym != firstGroupItems[j].Sources[mainSource][0].Homonym {
-			return firstGroupItems[i].Sources[mainSource][0].Homonym < firstGroupItems[j].Sources[mainSource][0].Homonym
+		if firstGroupItems[i].Sources[sortBySource][0].Homonym != firstGroupItems[j].Sources[sortBySource][0].Homonym {
+			return firstGroupItems[i].Sources[sortBySource][0].Homonym < firstGroupItems[j].Sources[sortBySource][0].Homonym
 		}
 		return morphologySort(firstGroupItems[i].Key, firstGroupItems[j].Key)
 	})
@@ -83,16 +83,16 @@ func sortVariants(data []LexItem, mainSource Source) []LexItem {
 	// groupID order map
 	groupOrder := make(map[string]int)
 	for i, v := range firstGroupItems {
-		groupOrder[v.Sources[mainSource][0].ID] = i
+		groupOrder[v.Sources[sortBySource][0].ID] = i
 	}
 
 	// sort groups all data
 	sort.Slice(data, func(i, j int) bool {
-		if data[i].Sources[mainSource][0].ID != data[j].Sources[mainSource][0].ID {
-			return groupOrder[data[i].Sources[mainSource][0].ID] < groupOrder[data[j].Sources[mainSource][0].ID]
+		if data[i].Sources[sortBySource][0].ID != data[j].Sources[sortBySource][0].ID {
+			return groupOrder[data[i].Sources[sortBySource][0].ID] < groupOrder[data[j].Sources[sortBySource][0].ID]
 		}
-		if data[i].Sources[mainSource][0].GroupOrder != data[j].Sources[mainSource][0].GroupOrder {
-			return data[i].Sources[mainSource][0].GroupOrder < data[j].Sources[mainSource][0].GroupOrder
+		if data[i].Sources[sortBySource][0].GroupOrder != data[j].Sources[sortBySource][0].GroupOrder {
+			return data[i].Sources[sortBySource][0].GroupOrder < data[j].Sources[sortBySource][0].GroupOrder
 		}
 		return morphologySort(data[i].Key, data[j].Key)
 	})

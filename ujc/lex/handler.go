@@ -33,9 +33,9 @@ import (
 )
 
 type LexExtraData struct {
-	CorpusId   string  `json:"corpusId"`
-	MainSource Source  `json:"mainSource"`
-	Variant    LexItem `json:"variant"`
+	CorpusId      string  `json:"corpusId"`
+	VariantSource Source  `json:"variantSource"`
+	Variant       LexItem `json:"variant"`
 }
 
 type Handler struct {
@@ -116,7 +116,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 		return
 	}
 
-	// just in case..., should not happen, since searched item is certainly in dictionary, `mainSource` exists
+	// just in case..., should not happen, since searched item is certainly in dictionary, `variantSource` exists
 	// TODO? corpus source
 	if lexItems == nil {
 		ans := map[string]any{
@@ -128,7 +128,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	}
 
 	// apply special transformations before getting source data
-	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), usedCandidate.Source, lexItems, TransformToDTIJ)
+	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems, TransformToDTIJ)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
@@ -146,7 +146,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	}
 
 	// apply special transformations after getting source data
-	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), usedCandidate.Source, lexItems, JoinToIBGenderFromSSC)
+	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems, JoinToIBGenderFromSSC)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
@@ -185,9 +185,9 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 			})
 		}
 		corpusEntry.ExtraData = LexExtraData{
-			CorpusId:   corpusId,
-			MainSource: usedCandidate.Source,
-			Variant:    item,
+			CorpusId:      corpusId,
+			VariantSource: usedCandidate.Source,
+			Variant:       item,
 		}
 		variants = append(variants, *corpusEntry)
 		// remove variant from suggestions if present

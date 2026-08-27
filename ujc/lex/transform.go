@@ -24,15 +24,15 @@ import (
 	"github.com/czcorpus/cnc-gokit/collections"
 )
 
-type LexTransform func(context.Context, *sql.DB, Source, []LexItem) ([]LexItem, error)
+type LexTransform func(context.Context, *sql.DB, []LexItem) ([]LexItem, error)
 
-func ApplyTransformations(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem, transforms ...LexTransform) ([]LexItem, error) {
+func ApplyTransformations(ctx context.Context, db *sql.DB, data []LexItem, transforms ...LexTransform) ([]LexItem, error) {
 	var err error
 	for _, transform := range transforms {
 		if transform == nil {
 			continue
 		}
-		data, err = transform(ctx, db, mainSource, data)
+		data, err = transform(ctx, db, data)
 		if err != nil {
 			return nil, fmt.Errorf("failed to transform data: %w", err)
 		}
@@ -41,11 +41,26 @@ func ApplyTransformations(ctx context.Context, db *sql.DB, mainSource Source, da
 	return data, nil
 }
 
-func Identity(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
+func Identity(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
 	return data, nil
 }
 
-func JoinToIBGenderFromSSC(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
+func TransformToDTIJ(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
+	var result []LexItem
+	for _, item := range data {
+		if item.Key.Pos == PosAdv || item.Key.Pos == PosPart || item.Key.Pos == PosInter || item.Key.Pos == PosConj {
+			item.Key.Pos = PosDTIJ
+			item.PosSource = ""
+		}
+		if collections.SliceFindIndex(result, func(v LexItem) bool { return item.Key == v.Key }) == -1 {
+			result = append(result, item)
+		}
+	}
+
+	return result, nil
+}
+
+func JoinToIBGenderFromSSC(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
 	// if data gender == I || B and no SSC source
 	// add to data SSC source with gender M
 	// (SSC source does not distinct masculine genders)
@@ -69,19 +84,4 @@ func JoinToIBGenderFromSSC(ctx context.Context, db *sql.DB, mainSource Source, d
 		}
 	}
 	return data, nil
-}
-
-func TransformToDTIJ(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
-	var result []LexItem
-	for _, item := range data {
-		if item.Key.Pos == PosAdv || item.Key.Pos == PosPart || item.Key.Pos == PosInter || item.Key.Pos == PosConj {
-			item.Key.Pos = PosDTIJ
-			item.PosSource = ""
-		}
-		if collections.SliceFindIndex(result, func(v LexItem) bool { return item.Key == v.Key }) == -1 {
-			result = append(result, item)
-		}
-	}
-
-	return result, nil
 }
