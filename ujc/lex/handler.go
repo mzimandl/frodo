@@ -128,7 +128,9 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	}
 
 	// apply special transformations before getting source data
-	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems, MergeToDTIJCR)
+	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems,
+		DTIJCR_MergeItems,
+	)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
@@ -146,7 +148,11 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	}
 
 	// apply special transformations after getting source data
-	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems, JoinToIBGenderFromSSC, IJPResolvePos(actions.sourcePriority))
+	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems,
+		SSC_JoinMToIB,
+		DTIJCR_ResolvePos(actions.sourcePriority),
+		IJP_ResolvePos(actions.sourcePriority),
+	)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
