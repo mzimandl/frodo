@@ -83,8 +83,8 @@ func ReadTSV(ctx context.Context, path string) (<-chan importDataChunk, error) {
 				Aspect:     fields[6],
 			}
 			if chunk[i].Pos == "" {
-				chunk[i].Pos = lex.POSUnkn
-				ans <- importDataChunk{Error: fmt.Errorf("line %d: empty pos, using '%s'", lineNum, lex.POSUnkn), NotFatal: true}
+				chunk[i].Pos = lex.PosUnkn
+				ans <- importDataChunk{Error: fmt.Errorf("line %d: empty pos, using '%s'", lineNum, lex.PosUnkn), NotFatal: true}
 			}
 			if i == procChunkSize-1 {
 				select {

@@ -29,7 +29,7 @@ const (
 	AspectOrder = "PIB"
 )
 
-func morphologySort(item1 LexItem, item2 LexItem) bool {
+func morphologySort(item1 LexKey, item2 LexKey) bool {
 	var orderMap, orderData1, orderData2 string
 	if item1.Pos == "N" && item2.Pos == "N" {
 		// order by gender if both items are nouns
@@ -52,16 +52,16 @@ func morphologySort(item1 LexItem, item2 LexItem) bool {
 	return orderIndex1 < orderIndex2
 }
 
-func sortVariants(data []LexItem, mainSource Source) []LexItem {
+func sortVariants(data []LexItem, sortBySource Source) []LexItem {
 	// Get first items of groups
 	firstGroupItems := collections.SliceReduce(data, func(acc []LexItem, curr LexItem, i int) []LexItem {
 		groupIdx := collections.SliceFindIndex(acc, func(v LexItem) bool {
-			return v.Sources[mainSource][0].ID == curr.Sources[mainSource][0].ID
+			return v.Sources[sortBySource][0].ID == curr.Sources[sortBySource][0].ID
 		})
 		if groupIdx == -1 {
 			return append(acc, curr)
 		}
-		if acc[groupIdx].Sources[mainSource][0].GroupOrder > curr.Sources[mainSource][0].GroupOrder {
+		if acc[groupIdx].Sources[sortBySource][0].GroupOrder > curr.Sources[sortBySource][0].GroupOrder {
 			acc[groupIdx] = curr
 		}
 		return acc
@@ -70,31 +70,31 @@ func sortVariants(data []LexItem, mainSource Source) []LexItem {
 	// Sort first items of groups
 	sort.Slice(firstGroupItems, func(i, j int) bool {
 		// first order by Lemma
-		if firstGroupItems[i].Lemma != firstGroupItems[j].Lemma {
-			return firstGroupItems[i].Lemma < firstGroupItems[j].Lemma
+		if firstGroupItems[i].Key.Lemma != firstGroupItems[j].Key.Lemma {
+			return firstGroupItems[i].Key.Lemma < firstGroupItems[j].Key.Lemma
 		}
 		// then by homonymy
-		if firstGroupItems[i].Sources[mainSource][0].Homonym != firstGroupItems[j].Sources[mainSource][0].Homonym {
-			return firstGroupItems[i].Sources[mainSource][0].Homonym < firstGroupItems[j].Sources[mainSource][0].Homonym
+		if firstGroupItems[i].Sources[sortBySource][0].Homonym != firstGroupItems[j].Sources[sortBySource][0].Homonym {
+			return firstGroupItems[i].Sources[sortBySource][0].Homonym < firstGroupItems[j].Sources[sortBySource][0].Homonym
 		}
-		return morphologySort(firstGroupItems[i], firstGroupItems[j])
+		return morphologySort(firstGroupItems[i].Key, firstGroupItems[j].Key)
 	})
 
 	// groupID order map
 	groupOrder := make(map[string]int)
 	for i, v := range firstGroupItems {
-		groupOrder[v.Sources[mainSource][0].ID] = i
+		groupOrder[v.Sources[sortBySource][0].ID] = i
 	}
 
 	// sort groups all data
 	sort.Slice(data, func(i, j int) bool {
-		if data[i].Sources[mainSource][0].ID != data[j].Sources[mainSource][0].ID {
-			return groupOrder[data[i].Sources[mainSource][0].ID] < groupOrder[data[j].Sources[mainSource][0].ID]
+		if data[i].Sources[sortBySource][0].ID != data[j].Sources[sortBySource][0].ID {
+			return groupOrder[data[i].Sources[sortBySource][0].ID] < groupOrder[data[j].Sources[sortBySource][0].ID]
 		}
-		if data[i].Sources[mainSource][0].GroupOrder != data[j].Sources[mainSource][0].GroupOrder {
-			return data[i].Sources[mainSource][0].GroupOrder < data[j].Sources[mainSource][0].GroupOrder
+		if data[i].Sources[sortBySource][0].GroupOrder != data[j].Sources[sortBySource][0].GroupOrder {
+			return data[i].Sources[sortBySource][0].GroupOrder < data[j].Sources[sortBySource][0].GroupOrder
 		}
-		return morphologySort(data[i], data[j])
+		return morphologySort(data[i].Key, data[j].Key)
 	})
 
 	return data

@@ -34,7 +34,7 @@ func InsertDictChunk(ctx context.Context, tx *sql.Tx, data []SrcFileRow) error {
 		if i > 0 {
 			insTpl.WriteString(", ")
 		}
-		insTpl.WriteString("(?, ?, ?, ?, ?, ?, ?, ?)")
+		insTpl.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		groupId := sql.NullString{String: v.GroupID, Valid: v.GroupID != ""}
 		homonym := 0
 		externalIDParts := strings.Split(v.ExternalID, "_")
@@ -45,12 +45,14 @@ func InsertDictChunk(ctx context.Context, tx *sql.Tx, data []SrcFileRow) error {
 		}
 		gender := sql.NullString{String: v.Gender, Valid: v.Gender != ""}
 		aspect := sql.NullString{String: v.Aspect, Valid: v.Aspect != ""}
-		dataArgs = append(dataArgs, groupId, homonym, v.Variant, v.Pos, gender, aspect, lex.SourceIJP, v.ExternalID)
+		plurality := lex.PluralityUnknown
+		uninflected := lex.UninflectedFalse
+		dataArgs = append(dataArgs, groupId, homonym, v.Variant, v.Pos, gender, aspect, plurality, uninflected, lex.SourceIJP, v.ExternalID)
 	}
 	_, err := tx.ExecContext(
 		ctx,
 		fmt.Sprintf(
-			"INSERT INTO lex_dictionary (group_id, homonym, lemma, pos, gender, aspect, source, external_id) VALUES %s",
+			"INSERT INTO lex_dictionary (group_id, homonym, lemma, pos, gender, aspect, plurality, uninflected, source, external_id) VALUES %s",
 			insTpl.String(),
 		),
 		dataArgs...,
@@ -69,10 +71,12 @@ func InsertDictChunk(ctx context.Context, tx *sql.Tx, data []SrcFileRow) error {
 			}
 			gender := sql.NullString{String: item.Gender, Valid: item.Gender != ""}
 			aspect := sql.NullString{String: item.Aspect, Valid: item.Aspect != ""}
+			plurality := lex.PluralityUnknown
+			uninflected := lex.UninflectedFalse
 			_, err := tx.ExecContext(
 				ctx,
-				"INSERT INTO lex_dictionary (group_id, homonym, lemma, pos, gender, aspect, source, external_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ",
-				groupId, homonym, item.Variant, item.Pos, gender, aspect, lex.SourceIJP, item.ExternalID,
+				"INSERT INTO lex_dictionary (group_id, homonym, lemma, pos, gender, aspect, plurality, uninflected, source, external_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ",
+				groupId, homonym, item.Variant, item.Pos, gender, aspect, plurality, uninflected, lex.SourceIJP, item.ExternalID,
 			)
 			if err != nil {
 				log.Error().Err(err).Any("values", item).Msg("failed to insert single row, ignoring")

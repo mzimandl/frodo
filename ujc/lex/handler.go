@@ -33,9 +33,9 @@ import (
 )
 
 type LexExtraData struct {
-	CorpusId   string  `json:"corpusId"`
-	MainSource Source  `json:"mainSource"`
-	Variant    LexItem `json:"variant"`
+	CorpusId      string  `json:"corpusId"`
+	VariantSource Source  `json:"variantSource"`
+	Variant       LexItem `json:"variant"`
 }
 
 type Handler struct {
@@ -103,18 +103,20 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 		return
 	}
 
-	// search variants for first candidate, the rest will be used as suggestions
+	// first candidate will be used for search, the rest will be used as suggestions
 	usedCandidate := searchCandidates[0]
 	suggestions := append(collections.SliceMap(searchCandidates[1:], func(item SearchCandidate, i int) string {
 		return item.Value
 	}), typoSuggestions...)
+
+	// get variants from one source
 	lexItems, err := SearchVariants(ctx, actions.db.DB(), usedCandidate.Value, usedCandidate.Source)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
 	}
 
-	// just in case..., should not happen, since searched item is certainly in dictionary, `mainSource` exists
+	// just in case..., should not happen, since searched item is certainly in dictionary, `variantSource` exists
 	// TODO? corpus source
 	if lexItems == nil {
 		ans := map[string]any{
@@ -125,48 +127,67 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 		return
 	}
 
-	// apply special transformations
-	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), usedCandidate.Source, lexItems, JoinToPluarlityFromIJP, JoinToIBGenderFromSSC)
+	// apply special transformations before getting source data
+	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems, MergeToDTIJCR)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
 	}
+
+	// for each variant, join source data
+	for i, item := range lexItems {
+		sources, err := SearchSources(ctx, actions.db.DB(), item.Key)
+		if err != nil {
+			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
+			return
+		}
+		log.Debug().Any("sources", sources).Send()
+		lexItems[i].Sources = sources
+	}
+
+	// apply special transformations after getting source data
+	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems, IJPResolvePos(actions.sourcePriority), JoinToIBGenderFromSSC)
+	if err != nil {
+		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
+		return
+	}
+
 	lexItems = sortVariants(lexItems, usedCandidate.Source)
 
 	// search corpus entry for each variant
 	// if not found, create a new entry with minimal data
 	variants := make([]dictionary.Lemma, 0, len(lexItems))
 	for i, item := range lexItems {
-		corpusEntry, err := actions.searchCorpusEntry(ctx, corpusId, item.Lemma, item.Pos)
+		corpusEntry, err := actions.searchCorpusEntry(ctx, corpusId, item.Key.Lemma, item.Key.Pos)
 		if err != nil {
 			uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 			return
 		}
 		// corpus entry needs to replace "B" gender with "MI"
-		lexSpecifier := cmp.Or(util.Ternary(item.Gender == GenderMascAnimInan, "MI", item.Gender), item.Aspect)
+		lexSpecifier := cmp.Or(util.Ternary(item.Key.Gender == GenderMascAnimInan, "MI", item.Key.Gender), item.Key.Aspect)
 		if corpusEntry == nil {
 			corpusEntry = &dictionary.Lemma{
 				ID:        fmt.Sprintf("lex-%d", i),
-				Lemma:     item.Lemma,
-				PoS:       item.Pos,
+				Lemma:     item.Key.Lemma,
+				PoS:       item.Key.Pos,
 				Specifier: lexSpecifier,
-				Forms:     []dictionary.Form{{Value: item.Lemma, Sublemma: item.Lemma}},
-				Sublemmas: []dictionary.Sublemma{{Value: item.Lemma}},
+				Forms:     []dictionary.Form{{Value: item.Key.Lemma, Sublemma: item.Key.Lemma}},
+				Sublemmas: []dictionary.Sublemma{{Value: item.Key.Lemma}},
 			}
 		} else {
 			corpusEntry.ID = fmt.Sprintf("corp-%d", i)
 			corpusEntry.Specifier = cmp.Or(corpusEntry.Specifier, lexSpecifier)
 			corpusEntry.Sublemmas = collections.SliceFilter(corpusEntry.Sublemmas, func(sublemma dictionary.Sublemma, i int) bool {
-				return sublemma.Value == item.Lemma
+				return sublemma.Value == item.Key.Lemma
 			})
 			corpusEntry.Forms = collections.SliceFilter(corpusEntry.Forms, func(form dictionary.Form, i int) bool {
-				return form.Sublemma == item.Lemma
+				return form.Sublemma == item.Key.Lemma
 			})
 		}
 		corpusEntry.ExtraData = LexExtraData{
-			CorpusId:   corpusId,
-			MainSource: usedCandidate.Source,
-			Variant:    item,
+			CorpusId:      corpusId,
+			VariantSource: usedCandidate.Source,
+			Variant:       item,
 		}
 		variants = append(variants, *corpusEntry)
 		// remove variant from suggestions if present

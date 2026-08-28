@@ -20,17 +20,19 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/czcorpus/cnc-gokit/collections"
 )
 
-type LexTransform func(context.Context, *sql.DB, Source, []LexItem) ([]LexItem, error)
+type LexTransform func(context.Context, *sql.DB, []LexItem) ([]LexItem, error)
 
-func ApplyTransformations(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem, transforms ...LexTransform) ([]LexItem, error) {
+func ApplyTransformations(ctx context.Context, db *sql.DB, data []LexItem, transforms ...LexTransform) ([]LexItem, error) {
 	var err error
 	for _, transform := range transforms {
 		if transform == nil {
 			continue
 		}
-		data, err = transform(ctx, db, mainSource, data)
+		data, err = transform(ctx, db, data)
 		if err != nil {
 			return nil, fmt.Errorf("failed to transform data: %w", err)
 		}
@@ -39,46 +41,75 @@ func ApplyTransformations(ctx context.Context, db *sql.DB, mainSource Source, da
 	return data, nil
 }
 
-func JoinToPluarlityFromIJP(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
-	// if data plurality != 0 and no IJP source
-	// add to data IJP source with plurality 0
-	// (IJP source does not distinct plurality)
-	for i, item := range data {
-		_, ok := item.Sources[SourceIJP]
-		if item.Plurality != 0 && !ok {
-			search := LexItem{
-				Lemma:       item.Lemma,
-				Pos:         item.Pos,
-				Gender:      item.Gender,
-				Aspect:      item.Aspect,
-				Uninflected: false, // TODO
-				Plurality:   0,
-			}
-			ids, err := SearchLexItemID(ctx, db, search, SourceIJP)
-			if err != nil {
-				return nil, fmt.Errorf("failed to join inflected IJP data: %w", err)
-			}
-			if len(ids) != 0 {
-				data[i].Sources[SourceIJP] = ids
-			}
-		}
-	}
+func Identity(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
 	return data, nil
 }
 
-func JoinToIBGenderFromSSC(ctx context.Context, db *sql.DB, mainSource Source, data []LexItem) ([]LexItem, error) {
+func MergeToDTIJCR(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
+	// making DTIJCR one group, one uninflected word with many PoS
+	var result []LexItem
+	for _, item := range data {
+		if item.Key.Pos != PosNum {
+			if item.Key.Pos == PosDTIJ || item.Key.Pos == PosAdv || item.Key.Pos == PosPart || item.Key.Pos == PosInter || item.Key.Pos == PosConj || item.Key.Pos == PosPrep {
+				item.Key.Pos = PosDTIJCR
+			}
+			if collections.SliceFindIndex(result, func(v LexItem) bool { return item.Key == v.Key }) == -1 {
+				result = append(result, item)
+			}
+		}
+	}
+	for _, item := range data {
+		if item.Key.Pos == PosNum {
+			item.Key.Pos = PosDTIJCR
+			if collections.SliceFindIndex(result, func(v LexItem) bool { return item.Key == v.Key }) == -1 {
+				item.Key.Pos = PosNum
+				result = append(result, item)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func IJPResolvePos(sourcePriority []Source) func(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
+	// IJP should never be source of PoS
+	return func(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
+		for i, item := range data {
+			if item.PosSource == SourceIJP {
+				for _, source := range sourcePriority {
+					if source == SourceIJP {
+						continue
+					} else if item.HasSource(source) {
+						if item.Key.Pos == PosDTIJCR {
+							data[i].PosSource = source
+						} else {
+							v := item.Sources[source]
+							if len(v) == 1 {
+								data[i].PosSource = source
+								data[i].Key.Pos = v[0].Pos
+							}
+						}
+						break
+					}
+				}
+			}
+		}
+		return data, nil
+	}
+}
+
+func JoinToIBGenderFromSSC(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
 	// if data gender == I || B and no SSC source
 	// add to data SSC source with gender M
 	// (SSC source does not distinct masculine genders)
 	for i, item := range data {
-		_, ok := item.Sources[SourceSSC]
-		if (item.Gender == GenderMascInan || item.Gender == GenderMascAnimInan) && !ok {
-			search := LexItem{
-				Lemma:       item.Lemma,
-				Pos:         item.Pos,
+		if !item.HasSource(SourceSSC) && (item.Key.Gender == GenderMascInan || item.Key.Gender == GenderMascAnimInan) {
+			search := LexKey{
+				Lemma:       item.Key.Lemma,
+				Pos:         item.Key.Pos,
 				Gender:      GenderMascAnim,
-				Aspect:      item.Aspect,
-				Uninflected: item.Uninflected,
+				Aspect:      item.Key.Aspect,
+				Uninflected: item.Key.Uninflected,
 				Plurality:   0,
 			}
 			ids, err := SearchLexItemID(ctx, db, search, SourceSSC)
