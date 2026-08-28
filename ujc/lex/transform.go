@@ -46,6 +46,7 @@ func Identity(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error
 }
 
 func MergeToDTIJCR(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
+	// making DTIJCR one group, one uninflected word with many PoS
 	var result []LexItem
 	for _, item := range data {
 		if item.Key.Pos != PosNum {
@@ -68,6 +69,33 @@ func MergeToDTIJCR(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, 
 	}
 
 	return result, nil
+}
+
+func IJPResolvePos(sourcePriority []Source) func(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
+	// IJP should never be source of PoS
+	return func(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
+		for i, item := range data {
+			if item.PosSource == SourceIJP {
+				for _, source := range sourcePriority {
+					if source == SourceIJP {
+						continue
+					} else if item.HasSource(source) {
+						if item.Key.Pos == PosDTIJCR {
+							data[i].PosSource = source
+						} else {
+							v := item.Sources[source]
+							if len(v) == 1 {
+								data[i].PosSource = source
+								data[i].Key.Pos = v[0].Pos
+							}
+						}
+						break
+					}
+				}
+			}
+		}
+		return data, nil
+	}
 }
 
 func JoinToIBGenderFromSSC(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {

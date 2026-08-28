@@ -146,7 +146,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	}
 
 	// apply special transformations after getting source data
-	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems, JoinToIBGenderFromSSC)
+	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems, IJPResolvePos(actions.sourcePriority), JoinToIBGenderFromSSC)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
