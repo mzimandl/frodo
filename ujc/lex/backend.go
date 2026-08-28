@@ -54,6 +54,8 @@ const (
 	PosPunc  = "Z"
 	PosDTIJ  = "DTIJ"
 
+	PosDTIJCR = "DTIJCR"
+
 	GenderMascAnim     = "M"
 	GenderMascInan     = "I"
 	GenderMascAnimInan = "B"
@@ -226,9 +228,9 @@ func SearchSources(ctx context.Context, db *sql.DB, lexKey LexKey) (map[Source][
 	whereParts := []string{"lemma = ?"}
 	args := []any{lexKey.Lemma}
 	if lexKey.Pos != PosUnkn {
-		if lexKey.Pos == PosDTIJ {
-			whereParts = append(whereParts, "pos IN (?, ?, ?, ?, ?, ?)")
-			args = append(args, PosDTIJ, PosAdv, PosPart, PosInter, PosConj, PosUnkn)
+		if lexKey.Pos == PosDTIJCR {
+			whereParts = append(whereParts, "pos IN (?, ?, ?, ?, ?, ?, ?, ?)")
+			args = append(args, PosDTIJ, PosAdv, PosPart, PosInter, PosConj, PosNum, PosPrep, PosUnkn)
 		} else {
 			whereParts = append(whereParts, "pos IN (?, ?)")
 			args = append(args, lexKey.Pos, PosUnkn)

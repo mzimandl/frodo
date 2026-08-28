@@ -45,15 +45,25 @@ func Identity(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error
 	return data, nil
 }
 
-func TransformToDTIJ(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
+func MergeToDTIJCR(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
 	var result []LexItem
 	for _, item := range data {
-		if item.Key.Pos == PosAdv || item.Key.Pos == PosPart || item.Key.Pos == PosInter || item.Key.Pos == PosConj {
-			item.Key.Pos = PosDTIJ
-			item.PosSource = ""
+		if item.Key.Pos != PosNum {
+			if item.Key.Pos == PosDTIJ || item.Key.Pos == PosAdv || item.Key.Pos == PosPart || item.Key.Pos == PosInter || item.Key.Pos == PosConj || item.Key.Pos == PosPrep {
+				item.Key.Pos = PosDTIJCR
+			}
+			if collections.SliceFindIndex(result, func(v LexItem) bool { return item.Key == v.Key }) == -1 {
+				result = append(result, item)
+			}
 		}
-		if collections.SliceFindIndex(result, func(v LexItem) bool { return item.Key == v.Key }) == -1 {
-			result = append(result, item)
+	}
+	for _, item := range data {
+		if item.Key.Pos == PosNum {
+			item.Key.Pos = PosDTIJCR
+			if collections.SliceFindIndex(result, func(v LexItem) bool { return item.Key == v.Key }) == -1 {
+				item.Key.Pos = PosNum
+				result = append(result, item)
+			}
 		}
 	}
 

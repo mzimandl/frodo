@@ -128,7 +128,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	}
 
 	// apply special transformations before getting source data
-	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems, TransformToDTIJ)
+	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems, MergeToDTIJCR)
 	if err != nil {
 		uniresp.RespondWithErrorJSON(ctx, err, http.StatusInternalServerError)
 		return
