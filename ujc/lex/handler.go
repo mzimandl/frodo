@@ -150,6 +150,7 @@ func (actions *Handler) SearchWord(ctx *gin.Context) {
 	// apply special transformations after getting source data
 	lexItems, err = ApplyTransformations(ctx, actions.db.DB(), lexItems,
 		SSC_JoinMToIB,
+		IJP_JoinNToCOrA,
 		DTIJCR_ResolvePos(actions.sourcePriority),
 		IJP_ResolvePos(actions.sourcePriority),
 	)

@@ -115,6 +115,32 @@ func IJP_ResolvePos(sourcePriority []Source) func(ctx context.Context, db *sql.D
 	}
 }
 
+func IJP_JoinNToCOrA(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
+	// TODO
+	// if data pos == C || A and no IJP source
+	// add to data IJP source with pos N
+	for i, item := range data {
+		if !item.HasSource(SourceIJP) && (item.Key.Pos == PosNum || item.Key.Pos == PosAdj) {
+			search := LexKey{
+				Lemma:       item.Key.Lemma,
+				Pos:         PosNoun,
+				Gender:      "",
+				Aspect:      "",
+				Uninflected: false,
+				Plurality:   5,
+			}
+			ids, err := SearchLexItemID(ctx, db, search, SourceIJP)
+			if err != nil {
+				return nil, fmt.Errorf("failed to join N to CA from IJP data: %w", err)
+			}
+			if len(ids) != 0 {
+				data[i].Sources[SourceIJP] = ids
+			}
+		}
+	}
+	return data, nil
+}
+
 func SSC_JoinMToIB(ctx context.Context, db *sql.DB, data []LexItem) ([]LexItem, error) {
 	// if data gender == I || B and no SSC source
 	// add to data SSC source with gender M
