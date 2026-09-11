@@ -30,12 +30,13 @@ import (
 type Source string
 
 const (
-	SourceASSC Source = "assc"
-	SourceIJP  Source = "ijp"
-	SourceSSJC Source = "ssjc"
-	SourcePSJC Source = "psjc"
-	SourceSJC  Source = "sjc"
-	SourceSSC  Source = "ssc"
+	SourceASSC   Source = "assc"
+	SourceIJP    Source = "ijp"
+	SourceSSJC   Source = "ssjc"
+	SourcePSJC   Source = "psjc"
+	SourceSJC    Source = "sjc"
+	SourceSSC    Source = "ssc"
+	SourceCorpus Source = "cnc"
 
 	PosAdj   = "A"
 	PosAbb   = "B"
